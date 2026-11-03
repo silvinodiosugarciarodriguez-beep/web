@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Products can be viewed by all visitors and updated by the store owner
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Orders can be created by customers and viewed/updated
+    match /orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Store settings (hours, fees, headlines, logos)
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // User profiles registered with Cédula
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+  }
+}

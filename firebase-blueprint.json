@@ -1,0 +1,107 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Plato, pizza o bebida del menú de Pizzería OZ",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "tagline": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "image": { "type": "string" },
+        "unit": { "type": "string" },
+        "stock": { "type": "number" },
+        "supportsCustomFlavors": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "discountBadge": { "type": "string" },
+        "featured": { "type": "boolean" }
+      },
+      "required": ["id", "name", "price", "category", "image"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Pedido de cliente en Pizzería OZ",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerCedula": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "deliveryMethod": { "type": "string" },
+        "deliveryAddress": { "type": "string" },
+        "apartment": { "type": "string" },
+        "deliveryCity": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "cashAmountToPayWith": { "type": "number" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "shippingFee": { "type": "number" },
+        "total": { "type": "number" },
+        "customerNotes": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "whatsappMessage": { "type": "string" }
+      },
+      "required": ["id", "customerName", "customerCedula", "customerPhone", "items", "total", "status"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Ajustes globales y textos de la tienda",
+      "type": "object",
+      "properties": {
+        "storeName": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "storeAddress": { "type": "string" },
+        "storeHours": { "type": "string" },
+        "shippingFee": { "type": "number" },
+        "freeShippingThreshold": { "type": "number" },
+        "logoUrl": { "type": "string" },
+        "heroImageUrl": { "type": "string" },
+        "topBannerAnnouncement": { "type": "string" },
+        "heroHeadline": { "type": "string" },
+        "heroSubtitle": { "type": "string" }
+      },
+      "required": ["storeName", "whatsappNumber", "shippingFee", "freeShippingThreshold"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Perfil de cliente registrado con Cédula",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "cedula": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "apartment": { "type": "string" },
+        "city": { "type": "string" },
+        "registeredAt": { "type": "string" }
+      },
+      "required": ["id", "name", "cedula", "phone"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "#/entities/Product",
+      "description": "Catálogo de pizzas y platos sincronizados en la nube"
+    },
+    "/orders/{orderId}": {
+      "schema": "#/entities/Order",
+      "description": "Historial y pedidos realizados por los clientes"
+    },
+    "/settings/{settingId}": {
+      "schema": "#/entities/StoreSettings",
+      "description": "Configuraciones globales de la pizzería"
+    },
+    "/users/{userId}": {
+      "schema": "#/entities/User",
+      "description": "Usuarios registrados con Cédula de Identidad"
+    }
+  }
+}

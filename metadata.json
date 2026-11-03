@@ -1,0 +1,8 @@
+{
+  "name": "Pizzería OZ",
+  "description": "Pizzería artesanal y Laboratorio de Sabores con catálogo para clientes registrados, pedidos por WhatsApp, delivery gratis a partir de $250 o retiro en local, y pago en efectivo o con tarjeta.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
