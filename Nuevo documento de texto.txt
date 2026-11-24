@@ -1,0 +1,44 @@
+# Configuración de Firebase para desarrollo local
+VITE_FIREBASE_API_KEY="AIzaSyBFFFwGsFwZgQotXrPNS4GlbwBIyPKRBdg"
+VITE_FIREBASE_AUTH_DOMAIN="gen-lang-client-0222522814.firebaseapp.com"
+VITE_FIREBASE_PROJECT_ID="gen-lang-client-0222522814"
+VITE_FIREBASE_STORAGE_BUCKET="gen-lang-client-0222522814.firebasestorage.app"
+VITE_FIREBASE_MESSAGING_SENDER_ID="204710543929"
+VITE_FIREBASE_APP_ID="1:204710543929:web:38a7fa4ca58ba30af3c3e8"
+VITE_FIREBASE_DATABASE_ID="ai-studio-41619f27-04cc-43c6-8ce2-2934a765ae73"
+VITE_FIREBASE_MEASUREMENT_ID=""
+
+
+
+
+
+Descarga el código.
+Ejecuta npm install en la terminal.
+Crea un archivo .env basado en .env.example con tus datos de Firebase.
+Ejecuta npm run dev y abre http://localhost:3000.
+La aplicación está ahora lista para ser personalizada, impresa y utilizada en cualquier entorno.
+
+Aquí tienes la guía paso a paso para configurar tu archivo .env en tu computadora local:
+Paso 1: Localiza la carpeta del proyecto
+Una vez que hayas descargado o exportado el código de la aplicación a tu computadora, abre la carpeta principal (donde verás archivos como package.json, README.md, etc.).
+Paso 2: Crea el archivo .env
+Tienes dos formas de hacerlo:
+Opción A (Recomendada): En tu editor de código (como VS Code), haz clic derecho en la carpeta raíz y selecciona "Nuevo archivo". Ponle el nombre exacto: .env (asegúrate de incluir el punto al principio y que no tenga ninguna extensión como .txt).
+Opción B (Desde el explorador de archivos): Haz una copia del archivo .env.example y cámbiale el nombre a simplemente .env.
+Paso 3: Copia y pega los valores
+Abre el nuevo archivo .env que acabas de crear y pega el siguiente bloque de texto (estos son tus datos reales de Firebase que están funcionando ahora mismo):
+code
+Env
+# Configuración de Firebase para desarrollo local
+VITE_FIREBASE_API_KEY="AIzaSyBFFFwGsFwZgQotXrPNS4GlbwBIyPKRBdg"
+VITE_FIREBASE_AUTH_DOMAIN="gen-lang-client-0222522814.firebaseapp.com"
+VITE_FIREBASE_PROJECT_ID="gen-lang-client-0222522814"
+VITE_FIREBASE_STORAGE_BUCKET="gen-lang-client-0222522814.firebasestorage.app"
+VITE_FIREBASE_MESSAGING_SENDER_ID="204710543929"
+VITE_FIREBASE_APP_ID="1:204710543929:web:38a7fa4ca58ba30af3c3e8"
+VITE_FIREBASE_DATABASE_ID="ai-studio-41619f27-04cc-43c6-8ce2-2934a765ae73"
+VITE_FIREBASE_MEASUREMENT_ID=""
+Paso 4: Guarda el archivo
+Presiona Ctrl + S (o Cmd + S en Mac) para guardar los cambios.
+Paso 5: Reinicia el servidor (si ya estaba corriendo)
+Si ya habías ejecutado npm run dev antes de crear el archivo, detén el proceso en la terminal (presionando Ctrl + C) y vuelve a ejecutarlo:

@@ -18,7 +18,10 @@
         "supportsCustomFlavors": { "type": "boolean" },
         "notes": { "type": "string" },
         "discountBadge": { "type": "string" },
-        "featured": { "type": "boolean" }
+        "featured": { "type": "boolean" },
+        "deleted": { "type": "boolean" },
+        "deletedAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
       "required": ["id", "name", "price", "category", "image"]
     },
@@ -28,6 +31,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "customerName": { "type": "string" },
         "customerCedula": { "type": "string" },
         "customerPhone": { "type": "string" },
@@ -78,10 +82,12 @@
         "cedula": { "type": "string" },
         "email": { "type": "string" },
         "phone": { "type": "string" },
+        "password": { "type": "string" },
         "address": { "type": "string" },
         "apartment": { "type": "string" },
         "city": { "type": "string" },
-        "registeredAt": { "type": "string" }
+        "registeredAt": { "type": "string" },
+        "loyalty": { "type": "object" }
       },
       "required": ["id", "name", "cedula", "phone"]
     }
@@ -102,6 +108,10 @@
     "/users/{userId}": {
       "schema": "#/entities/User",
       "description": "Usuarios registrados con Cédula de Identidad"
+    },
+    "/test/{docId}": {
+      "schema": "#/entities/StoreSettings",
+      "description": "Verificación de conectividad con Firestore"
     }
   }
 }
