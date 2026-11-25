@@ -1,9 +1,103 @@
-import { doc, setDoc, deleteDoc, onSnapshot, collection, getDocFromServer } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, getDocs, onSnapshot, collection, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Product, CartItem, User, Order, ContactMessage, DeliveryMethod, PaymentMethod, OrderStatus, BurgerTier } from '../types';
 import { INITIAL_PRODUCTS } from '../data/products';
 import { calculateExtraFlavorsCost } from '../data/pizzaFlavors';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  };
+}
+
+function sanitizeForFirestore<T>(data: T): T {
+  if (Array.isArray(data)) {
+    return data
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeForFirestore(item)) as unknown as T;
+  }
+  if (data !== null && typeof data === 'object') {
+    const cleaned: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      if (value !== undefined) {
+        cleaned[key] = sanitizeForFirestore(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return data;
+}
+
+const INITIAL_PRODUCT_IDS = new Set(INITIAL_PRODUCTS.map((p) => p.id));
+
+function mergeCatalogWithFirestore(remoteDocs: Product[]): Product[] {
+  const remoteMap = new Map<string, Product>();
+  for (const item of remoteDocs) {
+    if (item && item.id) {
+      remoteMap.set(item.id, item);
+    }
+  }
+
+  const baseMerged: Product[] = [];
+  for (const baseProd of INITIAL_PRODUCTS) {
+    const remote = remoteMap.get(baseProd.id);
+    if (remote) {
+      if (remote.deleted === true) {
+        continue;
+      }
+      baseMerged.push({ ...baseProd, ...remote });
+    } else {
+      baseMerged.push(baseProd);
+    }
+  }
+
+  const customProducts = remoteDocs
+    .filter((item) => item && item.id && !INITIAL_PRODUCT_IDS.has(item.id) && item.deleted !== true && item.name !== '__deleted__')
+    .sort((a, b) => {
+      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return timeB - timeA;
+    });
+
+  return [...customProducts, ...baseMerged];
+}
+
+function isProductModifiedFromDefault(current: Product, base: Product): boolean {
+  return (
+    current.name !== base.name ||
+    current.tagline !== base.tagline ||
+    current.description !== base.description ||
+    current.price !== base.price ||
+    current.category !== base.category ||
+    current.image !== base.image ||
+    current.unit !== base.unit ||
+    Boolean(current.supportsCustomFlavors) !== Boolean(base.supportsCustomFlavors) ||
+    (current.subCategory || '') !== (base.subCategory || '')
+  );
+}
 
 export interface StoreSettings {
   storeName: string;
@@ -41,6 +135,8 @@ interface StoreContextType {
   addProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
   resetProductsToDefault: () => void;
+  isSyncingCloud: boolean;
+  syncLocalCatalogToCloud: (silent?: boolean) => Promise<void>;
 
   cart: CartItem[];
   addToCart: (product: Product, quantity?: number, selectedFlavors?: string[], observations?: string, selectedBurgerTier?: BurgerTier, customUnitPrice?: number) => void;
@@ -236,6 +332,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   });
 
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const hasReceivedRemoteProductsRef = useRef(false);
+  const localInitialBackupRef = useRef<Product[]>(products);
+  const productsRef = useRef<Product[]>(products);
+  productsRef.current = products;
+
   // Admin CMS Panel State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   // Superusuario credentials ("diosu" / "43564586x")
@@ -346,46 +448,96 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
 
 
+  const storeSettingsRef = useRef<StoreSettings>(storeSettings);
+  storeSettingsRef.current = storeSettings;
+
+  // Toast
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((current) => (current === msg ? null : current));
+    }, 3200);
+  };
+
+  const handleFirestoreError = (
+    error: unknown,
+    operationType: OperationType,
+    path: string | null,
+    notifyUser: boolean = false
+  ) => {
+    const errInfo: FirestoreErrorInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: undefined,
+        email: undefined,
+        emailVerified: undefined,
+        isAnonymous: undefined,
+        tenantId: undefined,
+        providerInfo: [],
+      },
+      operationType,
+      path,
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    if (notifyUser) {
+      showToast('⚠️ Error al sincronizar con la nube. Verificá tu conexión a internet.');
+    }
+  };
+
   // Synchronize in real time with Cloud Firestore
   useEffect(() => {
     // 1. Validate connection with getDocFromServer
-    try {
-      getDocFromServer(doc(db, 'settings', 'connection_check')).catch(() => {});
-    } catch {}
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.error('Please check your Firebase configuration.');
+        }
+      }
+    };
+    testConnection();
 
-    // 2. Real-time products sync from Firestore
+    // 2. Real-time products sync from Firestore (merges custom/edited/deleted docs onto INITIAL_PRODUCTS)
     let unsubProducts = () => {};
     try {
       unsubProducts = onSnapshot(collection(db, 'products'), (snapshot) => {
         if (!snapshot.empty) {
+          hasReceivedRemoteProductsRef.current = true;
           const remoteProducts: Product[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data() as Product;
-            if (data && data.id && data.name) {
-              remoteProducts.push(data);
+            if (data && (data.id || docSnap.id)) {
+              remoteProducts.push({ ...data, id: data.id || docSnap.id });
             }
           });
-          if (remoteProducts.length > 0) {
-            setProducts(remoteProducts);
-          }
+          setProducts(mergeCatalogWithFirestore(remoteProducts));
+        } else if (hasReceivedRemoteProductsRef.current) {
+          setProducts(INITIAL_PRODUCTS);
         }
       }, (err) => {
-        // Fallback silently to localStorage on permission/offline
+        handleFirestoreError(err, OperationType.LIST, 'products', false);
       });
-    } catch {}
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'products', false);
+    }
 
     // 3. Real-time settings sync from Firestore
     let unsubSettings = () => {};
     try {
       unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
         if (docSnap.exists()) {
-          const remoteSettings = docSnap.data() as StoreSettings;
+          const remoteSettings = docSnap.data() as Partial<StoreSettings>;
           setStoreSettings((prev) => ({ ...prev, ...remoteSettings }));
         }
       }, (err) => {
-        // Fallback silently to localStorage
+        handleFirestoreError(err, OperationType.GET, 'settings/global', false);
       });
-    } catch {}
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, 'settings/global', false);
+    }
 
     // 4. Real-time orders sync from Firestore
     let unsubOrders = () => {};
@@ -400,18 +552,67 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
           });
           if (remoteOrders.length > 0) {
+            remoteOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             setOrders(remoteOrders);
           }
         }
       }, (err) => {
-        // Fallback silently to localStorage
+        handleFirestoreError(err, OperationType.LIST, 'orders', false);
       });
-    } catch {}
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'orders', false);
+    }
+
+    // 5. Real-time registered users & loyalty sync from Firestore
+    let unsubUsers = () => {};
+    try {
+      unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+        if (!snapshot.empty) {
+          const remoteUsers: User[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as User;
+            if (data && data.id) {
+              remoteUsers.push(data);
+            }
+          });
+          if (remoteUsers.length > 0) {
+            setAllRegisteredUsers((prev) => {
+              const mergedMap = new Map<string, User>();
+              for (const u of prev) {
+                mergedMap.set(u.id, u);
+              }
+              for (const ru of remoteUsers) {
+                mergedMap.set(ru.id, ru);
+              }
+              const merged = Array.from(mergedMap.values());
+              try {
+                localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+
+            setUser((currentUser) => {
+              if (!currentUser) return null;
+              const cleanCurrent = currentUser.cedula.replace(/[^0-9]/g, '');
+              const match = remoteUsers.find(
+                (ru) => ru.id === currentUser.id || ru.cedula.replace(/[^0-9]/g, '') === cleanCurrent
+              );
+              return match ? { ...currentUser, ...match } : currentUser;
+            });
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'users', false);
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'users', false);
+    }
 
     return () => {
       unsubProducts();
       unsubSettings();
       unsubOrders();
+      unsubUsers();
     };
   }, []);
 
@@ -453,16 +654,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return [DEMO_USER];
     }
   });
-
-  // Toast
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((current) => (current === msg ? null : current));
-    }, 3200);
-  };
 
   // Sync to localStorage
   useEffect(() => {
@@ -619,14 +810,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Auth operations using Cédula
   const login = (cedula: string) => {
     const cleanCedula = cedula.trim();
-    let savedUsers: User[] = [];
+    const digitsOnly = cleanCedula.replace(/[^0-9]/g, '');
+    let savedUsers: User[] = [...allRegisteredUsers];
     try {
       const stored = localStorage.getItem('pizzeria_oz_registered_users');
-      if (stored) savedUsers = JSON.parse(stored);
+      if (stored) {
+        const localParsed: User[] = JSON.parse(stored);
+        const existingIds = new Set(savedUsers.map((u) => u.id));
+        for (const lu of localParsed) {
+          if (!existingIds.has(lu.id)) savedUsers.push(lu);
+        }
+      }
     } catch {}
 
     const found = savedUsers.find(
-      (u) => u.cedula.replace(/[^0-9]/g, '') === cleanCedula.replace(/[^0-9]/g, '')
+      (u) => u.cedula.replace(/[^0-9]/g, '') === digitsOnly
     );
     if (found) {
       setUser(found);
@@ -634,6 +832,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return true;
     }
 
+    const formattedCardNum = `OZ-${digitsOnly.slice(-8).padStart(8, '0').slice(0, 4)}-${digitsOnly.slice(-8).padStart(8, '0').slice(4)}`;
     const newUser: User = {
       id: `usr-${Date.now().toString(36)}`,
       name: `Cliente CI ${cleanCedula}`,
@@ -642,8 +841,26 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       address: 'Dirección por definir',
       city: 'Buenos Aires',
       registeredAt: new Date().toISOString().split('T')[0],
+      loyalty: {
+        stampsCount: 1,
+        totalStampsEarned: 1,
+        completedCards: 0,
+        unclaimedRewards: 0,
+        tier: 'amigo',
+        cardNumber: formattedCardNum,
+      },
     };
     setUser(newUser);
+    setAllRegisteredUsers((prev) => {
+      const updatedList = [...prev.filter((u) => u.id !== newUser.id), newUser];
+      try {
+        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(updatedList));
+      } catch {}
+      return updatedList;
+    });
+    setDoc(doc(db, 'users', newUser.id), sanitizeForFirestore(newUser), { merge: true }).catch((err) => {
+      handleFirestoreError(err, OperationType.CREATE, `users/${newUser.id}`, false);
+    });
     showToast(`Sesión iniciada con Cédula ${cleanCedula}.`);
     return true;
   };
@@ -667,14 +884,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     };
     setUser(newUser);
 
-    try {
-      const stored = localStorage.getItem('pizzeria_oz_registered_users');
-      const list: User[] = stored ? JSON.parse(stored) : [DEMO_USER];
-      const updatedList = [...list.filter(u => u.id !== newUser.id), newUser];
-      setAllRegisteredUsers(updatedList);
-      localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(updatedList));
-      setDoc(doc(db, 'users', newUser.id), newUser, { merge: true }).catch(() => {});
-    } catch {}
+    setAllRegisteredUsers((prev) => {
+      const updatedList = [...prev.filter((u) => u.id !== newUser.id), newUser];
+      try {
+        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(updatedList));
+      } catch {}
+      return updatedList;
+    });
+
+    setDoc(doc(db, 'users', newUser.id), sanitizeForFirestore(newUser), { merge: true }).catch((err) => {
+      handleFirestoreError(err, OperationType.CREATE, `users/${newUser.id}`, false);
+    });
 
     showToast(`¡Cuenta creada con éxito! Bienvenido a Pizzería OZ, ${newUser.name}.`);
     return newUser;
@@ -696,6 +916,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (!user) return;
     const updated = { ...user, ...data };
     setUser(updated);
+    setAllRegisteredUsers((prev) => {
+      const next = prev.map((u) => (u.id === updated.id ? updated : u));
+      try {
+        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setDoc(doc(db, 'users', updated.id), sanitizeForFirestore(updated), { merge: true }).catch((err) => {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${updated.id}`, false);
+    });
     showToast('Tus datos han sido actualizados.');
   };
 
@@ -736,9 +966,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               localStorage.setItem('pizzeria_oz_user', JSON.stringify(userUpdated));
             } catch {}
           }
-          try {
-            setDoc(doc(db, 'users', userUpdated.id), userUpdated, { merge: true }).catch(() => {});
-          } catch {}
+          setDoc(doc(db, 'users', userUpdated.id), sanitizeForFirestore(userUpdated), { merge: true }).catch((err) => {
+            handleFirestoreError(err, OperationType.UPDATE, `users/${userUpdated.id}`, true);
+          });
           return userUpdated;
         }
         return u;
@@ -773,9 +1003,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               localStorage.setItem('pizzeria_oz_user', JSON.stringify(userUpdated));
             } catch {}
           }
-          try {
-            setDoc(doc(db, 'users', userUpdated.id), userUpdated, { merge: true }).catch(() => {});
-          } catch {}
+          setDoc(doc(db, 'users', userUpdated.id), sanitizeForFirestore(userUpdated), { merge: true }).catch((err) => {
+            handleFirestoreError(err, OperationType.UPDATE, `users/${userUpdated.id}`, true);
+          });
           return userUpdated;
         }
         return u;
@@ -834,6 +1064,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       isRewardRedeemActive ? '\n🎁 *¡PREMIO APLICADO! Canje de Pizzeta Muzzarella o Fainá Gratis*' : ''
     }`;
 
+    const discountApplied = Math.max(0, order.subtotal + order.shippingFee - order.total);
+
     return `🍕 *¡Hola ${storeSettings.storeName}! Quiero confirmar mi pedido.*
 
 🧾 *Pedido:* #${order.id}
@@ -852,7 +1084,7 @@ ${itemsText}
 ──────────────────
 *Subtotal:* ${order.subtotal.toLocaleString('es-AR')}
 *Envío:* ${order.shippingFee === 0 ? '¡GRATIS! (Superó los $250)' : `${order.shippingFee.toLocaleString('es-AR')}`}
-${isRewardRedeemActive ? '*Descuento Premio Tarjeta:* -$270\n' : ''}*TOTAL A PAGAR: ${(isRewardRedeemActive ? Math.max(0, order.total - 270) : order.total).toLocaleString('es-AR')}*
+${discountApplied > 0 ? `*Descuento Premio Tarjeta:* -$${discountApplied.toLocaleString('es-AR')}\n` : ''}*TOTAL A PAGAR: $${order.total.toLocaleString('es-AR')}*
 ──────────────────${notesText}
 
 Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gracias!`;
@@ -944,9 +1176,9 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
       addStampToUser(user.id, 1);
     }
 
-    try {
-      setDoc(doc(db, 'orders', newOrder.id), newOrder).catch(() => {});
-    } catch {}
+    setDoc(doc(db, 'orders', newOrder.id), sanitizeForFirestore(newOrder)).catch((err) => {
+      handleFirestoreError(err, OperationType.CREATE, `orders/${newOrder.id}`, true);
+    });
 
     return newOrder;
   };
@@ -955,15 +1187,24 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status } : o))
     );
-    showToast(`Estado del pedido #${orderId} actualizado.`);
+    setDoc(doc(db, 'orders', orderId), { status }, { merge: true })
+      .then(() => {
+        showToast(`Estado del pedido #${orderId} actualizado en la nube.`);
+      })
+      .catch((err) => {
+        handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`, true);
+      });
   };
 
   const updateStoreSettings = (newSettings: Partial<StoreSettings>) => {
     setStoreSettings((prev) => ({ ...prev, ...newSettings }));
-    try {
-      setDoc(doc(db, 'settings', 'global'), newSettings, { merge: true }).catch(() => {});
-    } catch {}
-    showToast('Configuración de Pizzería OZ guardada y sincronizada en la nube.');
+    setDoc(doc(db, 'settings', 'global'), sanitizeForFirestore(newSettings), { merge: true })
+      .then(() => {
+        showToast('✓ Configuración guardada y sincronizada en la nube.');
+      })
+      .catch((err) => {
+        handleFirestoreError(err, OperationType.UPDATE, 'settings/global', true);
+      });
   };
 
   const sendContactMessage = (msg: Omit<ContactMessage, 'id' | 'date'>) => {
@@ -977,29 +1218,64 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
   };
 
   const updateProduct = (updatedProduct: Product) => {
+    const productWithMeta: Product = {
+      ...updatedProduct,
+      deleted: false,
+      updatedAt: new Date().toISOString(),
+    };
     setProducts((prev) =>
-      prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
+      prev.map((p) => (p.id === productWithMeta.id ? productWithMeta : p))
     );
-    try {
-      setDoc(doc(db, 'products', updatedProduct.id), updatedProduct, { merge: true }).catch(() => {});
-    } catch {}
-    showToast(`✓ Producto "${updatedProduct.name}" actualizado en la nube.`);
+    setDoc(doc(db, 'products', productWithMeta.id), sanitizeForFirestore(productWithMeta), { merge: true })
+      .then(() => {
+        showToast(`✓ Producto "${productWithMeta.name}" actualizado en la nube.`);
+      })
+      .catch((err) => {
+        handleFirestoreError(err, OperationType.UPDATE, `products/${productWithMeta.id}`, true);
+      });
   };
 
   const addProduct = (newProduct: Product) => {
-    setProducts((prev) => [newProduct, ...prev]);
-    try {
-      setDoc(doc(db, 'products', newProduct.id), newProduct).catch(() => {});
-    } catch {}
-    showToast(`✓ Producto "${newProduct.name}" agregado al menú y guardado en la nube.`);
+    const productWithMeta: Product = {
+      ...newProduct,
+      deleted: false,
+      updatedAt: new Date().toISOString(),
+    };
+    setProducts((prev) => [productWithMeta, ...prev]);
+    setDoc(doc(db, 'products', productWithMeta.id), sanitizeForFirestore(productWithMeta))
+      .then(() => {
+        showToast(`✓ Producto "${productWithMeta.name}" agregado y guardado en la nube.`);
+      })
+      .catch((err) => {
+        handleFirestoreError(err, OperationType.CREATE, `products/${productWithMeta.id}`, true);
+      });
   };
 
   const deleteProduct = (productId: string) => {
     setProducts((prev) => prev.filter((p) => p.id !== productId));
-    try {
-      deleteDoc(doc(db, 'products', productId)).catch(() => {});
-    } catch {}
-    showToast('Producto eliminado del menú.');
+    if (INITIAL_PRODUCT_IDS.has(productId)) {
+      const tombstone = {
+        id: productId,
+        name: '__deleted__',
+        deleted: true,
+        deletedAt: new Date().toISOString(),
+      };
+      setDoc(doc(db, 'products', productId), tombstone)
+        .then(() => {
+          showToast('Producto eliminado del menú en todos los dispositivos.');
+        })
+        .catch((err) => {
+          handleFirestoreError(err, OperationType.DELETE, `products/${productId}`, true);
+        });
+    } else {
+      deleteDoc(doc(db, 'products', productId))
+        .then(() => {
+          showToast('Producto eliminado del menú en todos los dispositivos.');
+        })
+        .catch((err) => {
+          handleFirestoreError(err, OperationType.DELETE, `products/${productId}`, true);
+        });
+    }
   };
 
   const resetProductsToDefault = () => {
@@ -1009,7 +1285,80 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
       localStorage.removeItem('pizzeria_oz_products_v4');
       localStorage.setItem('pizzeria_oz_products_v8', JSON.stringify(INITIAL_PRODUCTS));
     } catch {}
-    showToast('Catálogo restablecido al menú de fábrica.');
+    getDocs(collection(db, 'products'))
+      .then((snap) => Promise.all(snap.docs.map((d) => deleteDoc(d.ref))))
+      .then(() => {
+        showToast('✓ Catálogo restablecido al menú de fábrica en la nube.');
+      })
+      .catch((err) => {
+        handleFirestoreError(err, OperationType.DELETE, 'products', true);
+      });
+  };
+
+  const syncLocalCatalogToCloud = async (silent: boolean = false) => {
+    setIsSyncingCloud(true);
+    try {
+      const currentList = [...productsRef.current];
+      const currentIds = new Set(currentList.map((p) => p.id));
+
+      // Include any pre-existing local edits captured before remote snapshot arrived
+      for (const localItem of localInitialBackupRef.current) {
+        if (!INITIAL_PRODUCT_IDS.has(localItem.id) && !currentIds.has(localItem.id)) {
+          currentList.unshift(localItem);
+          currentIds.add(localItem.id);
+        } else if (INITIAL_PRODUCT_IDS.has(localItem.id)) {
+          const base = INITIAL_PRODUCTS.find((b) => b.id === localItem.id);
+          const current = currentList.find((c) => c.id === localItem.id);
+          if (base && current && isProductModifiedFromDefault(localItem, base) && !isProductModifiedFromDefault(current, base)) {
+            const idx = currentList.findIndex((c) => c.id === localItem.id);
+            if (idx > -1) currentList[idx] = localItem;
+          }
+        }
+      }
+
+      const writePromises: Promise<void>[] = [];
+      const baseMap = new Map(INITIAL_PRODUCTS.map((p) => [p.id, p]));
+
+      for (const prod of currentList) {
+        const base = baseMap.get(prod.id);
+        if (!base || isProductModifiedFromDefault(prod, base)) {
+          const payload: Product = {
+            ...prod,
+            deleted: false,
+            updatedAt: prod.updatedAt || new Date().toISOString(),
+          };
+          writePromises.push(
+            setDoc(doc(db, 'products', prod.id), sanitizeForFirestore(payload), { merge: true })
+          );
+        }
+      }
+
+      for (const baseProd of INITIAL_PRODUCTS) {
+        if (!currentIds.has(baseProd.id)) {
+          writePromises.push(
+            setDoc(doc(db, 'products', baseProd.id), {
+              id: baseProd.id,
+              name: '__deleted__',
+              deleted: true,
+              deletedAt: new Date().toISOString(),
+            })
+          );
+        }
+      }
+
+      writePromises.push(
+        setDoc(doc(db, 'settings', 'global'), sanitizeForFirestore(storeSettingsRef.current), { merge: true })
+      );
+
+      await Promise.all(writePromises);
+      if (!silent) {
+        showToast('☁️ Catálogo, precios, fotos y configuración sincronizados con los celulares.');
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'products', !silent);
+    } finally {
+      setIsSyncingCloud(false);
+    }
   };
 
   const loginAdmin = (usernameInput: string, passwordInput: string): boolean => {
@@ -1022,6 +1371,8 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
     if ((u === expectedUser || u === 'diosu') && (p === expectedPass || p === '43564586x')) {
       setIsAdminAuthenticated(true);
       showToast(`✓ Acceso concedido: Bienvenido Superusuario ${superadminUsername}.`);
+      // Push any pending local catalog/settings changes up to Firestore automatically
+      syncLocalCatalogToCloud(true);
       return true;
     }
 
@@ -1048,6 +1399,8 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
         addProduct,
         deleteProduct,
         resetProductsToDefault,
+        isSyncingCloud,
+        syncLocalCatalogToCloud,
         cart,
         addToCart,
         updateItemObservations,
