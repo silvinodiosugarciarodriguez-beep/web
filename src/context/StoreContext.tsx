@@ -52,6 +52,185 @@ function sanitizeForFirestore<T>(data: T): T {
 }
 
 const INITIAL_PRODUCT_IDS = new Set(INITIAL_PRODUCTS.map((p) => p.id));
+const INITIAL_PRODUCT_MAP = new Map<string, Product>(INITIAL_PRODUCTS.map((p) => [p.id, p]));
+const DEFAULT_PRODUCT_IMAGE = '/assets/images/pizza_muzzarella_oz_1792935617970.jpg';
+
+function cleanAssetUrl(url: unknown, fallback: string): string {
+  if (typeof url !== 'string' || !url.trim()) return fallback;
+  return url.startsWith('/src/assets/images/')
+    ? url.replace('/src/assets/images/', '/assets/images/')
+    : url;
+}
+
+function normalizeProduct(raw: any, base?: Product): Product {
+  const safeObj = raw && typeof raw === 'object' ? raw : {};
+  const id = typeof safeObj.id === 'string' && safeObj.id.trim() ? safeObj.id : base?.id || `prod-${Date.now().toString(36)}`;
+  const rawPrice = Number(safeObj.price);
+  const price = Number.isFinite(rawPrice) ? rawPrice : base?.price ?? 0;
+  const rawOrig = Number(safeObj.originalPrice);
+  const originalPrice = Number.isFinite(rawOrig) && rawOrig > 0 ? rawOrig : base?.originalPrice;
+  const rawStock = Number(safeObj.stock);
+  const stock = Number.isFinite(rawStock) ? rawStock : base?.stock ?? 99;
+
+  return {
+    ...(base || {}),
+    ...safeObj,
+    id,
+    name: typeof safeObj.name === 'string' && safeObj.name.trim() ? safeObj.name : base?.name || 'Producto OZ',
+    tagline: typeof safeObj.tagline === 'string' ? safeObj.tagline : base?.tagline || '',
+    description: typeof safeObj.description === 'string' ? safeObj.description : base?.description || '',
+    price,
+    originalPrice,
+    discountBadge: typeof safeObj.discountBadge === 'string' ? safeObj.discountBadge : base?.discountBadge,
+    category: (typeof safeObj.category === 'string' && safeObj.category.trim() ? safeObj.category : base?.category || 'pizzetas') as Product['category'],
+    image: cleanAssetUrl(safeObj.image, base?.image || DEFAULT_PRODUCT_IMAGE),
+    unit: typeof safeObj.unit === 'string' && safeObj.unit.trim() ? safeObj.unit : base?.unit || 'unidad',
+    origin: typeof safeObj.origin === 'string' ? safeObj.origin : base?.origin,
+    stock,
+    featured: typeof safeObj.featured === 'boolean' ? safeObj.featured : base?.featured,
+    notes: typeof safeObj.notes === 'string' ? safeObj.notes : base?.notes,
+    supportsCustomFlavors:
+      typeof safeObj.supportsCustomFlavors === 'boolean'
+        ? safeObj.supportsCustomFlavors
+        : base?.supportsCustomFlavors,
+    subCategory: typeof safeObj.subCategory === 'string' ? safeObj.subCategory : base?.subCategory,
+    burgerTiers:
+      safeObj.burgerTiers && typeof safeObj.burgerTiers === 'object'
+        ? safeObj.burgerTiers
+        : base?.burgerTiers,
+    deleted: safeObj.deleted === true,
+    deletedAt: typeof safeObj.deletedAt === 'string' ? safeObj.deletedAt : undefined,
+    updatedAt: typeof safeObj.updatedAt === 'string' ? safeObj.updatedAt : base?.updatedAt,
+  };
+}
+
+function normalizeUser(raw: any): User {
+  const safeObj = raw && typeof raw === 'object' ? raw : {};
+  const cedula = typeof safeObj.cedula === 'string' ? safeObj.cedula : String(safeObj.cedula ?? '');
+  const cleanCedula = cedula.replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
+  const defaultCardNumber = `OZ-${cleanCedula.slice(0, 4)}-${cleanCedula.slice(4)}`;
+  const rawLoyalty = safeObj.loyalty && typeof safeObj.loyalty === 'object' ? safeObj.loyalty : {};
+  const stampsCount = Number.isFinite(Number(rawLoyalty.stampsCount)) ? Number(rawLoyalty.stampsCount) : 1;
+  const totalStampsEarned = Number.isFinite(Number(rawLoyalty.totalStampsEarned)) ? Number(rawLoyalty.totalStampsEarned) : stampsCount;
+  const completedCards = Number.isFinite(Number(rawLoyalty.completedCards)) ? Number(rawLoyalty.completedCards) : 0;
+  const unclaimedRewards = Number.isFinite(Number(rawLoyalty.unclaimedRewards)) ? Number(rawLoyalty.unclaimedRewards) : 0;
+
+  return {
+    id: typeof safeObj.id === 'string' && safeObj.id.trim() ? safeObj.id : `usr-${Date.now().toString(36)}`,
+    name: typeof safeObj.name === 'string' && safeObj.name.trim() ? safeObj.name : 'Cliente OZ',
+    cedula,
+    password: typeof safeObj.password === 'string' ? safeObj.password : undefined,
+    email: typeof safeObj.email === 'string' ? safeObj.email : undefined,
+    phone: typeof safeObj.phone === 'string' ? safeObj.phone : '',
+    address: typeof safeObj.address === 'string' ? safeObj.address : '',
+    city: typeof safeObj.city === 'string' ? safeObj.city : '',
+    apartment: typeof safeObj.apartment === 'string' ? safeObj.apartment : undefined,
+    registeredAt: typeof safeObj.registeredAt === 'string' && safeObj.registeredAt ? safeObj.registeredAt : new Date().toISOString().split('T')[0],
+    loyalty: {
+      stampsCount,
+      totalStampsEarned,
+      completedCards,
+      unclaimedRewards,
+      tier:
+        rawLoyalty.tier === 'maestro_vip' || rawLoyalty.tier === 'explorador' || rawLoyalty.tier === 'amigo'
+          ? rawLoyalty.tier
+          : totalStampsEarned >= 16
+          ? 'maestro_vip'
+          : totalStampsEarned >= 8
+          ? 'explorador'
+          : 'amigo',
+      cardNumber: typeof rawLoyalty.cardNumber === 'string' && rawLoyalty.cardNumber ? rawLoyalty.cardNumber : defaultCardNumber,
+    },
+  };
+}
+
+function normalizeOrder(raw: any): Order | null {
+  if (!raw || typeof raw !== 'object' || !raw.id) return null;
+  const rawItems = Array.isArray(raw.items) ? raw.items : [];
+  const items = rawItems
+    .filter((it: any) => it && typeof it === 'object')
+    .map((it: any) => {
+      const quantity = Number.isFinite(Number(it.quantity)) && Number(it.quantity) > 0 ? Number(it.quantity) : 1;
+      const unitPrice = Number.isFinite(Number(it.unitPrice)) ? Number(it.unitPrice) : 0;
+      const subtotal = Number.isFinite(Number(it.subtotal)) ? Number(it.subtotal) : unitPrice * quantity;
+      return {
+        productId: typeof it.productId === 'string' ? it.productId : 'item',
+        productName: typeof it.productName === 'string' && it.productName ? it.productName : 'Producto OZ',
+        quantity,
+        unitPrice,
+        subtotal,
+        image: typeof it.image === 'string' ? it.image : undefined,
+        selectedFlavors: Array.isArray(it.selectedFlavors) ? it.selectedFlavors.filter((f: any) => typeof f === 'string') : undefined,
+        extraFlavorsCost: Number.isFinite(Number(it.extraFlavorsCost)) ? Number(it.extraFlavorsCost) : undefined,
+        observations: typeof it.observations === 'string' ? it.observations : undefined,
+        selectedBurgerTier: typeof it.selectedBurgerTier === 'string' ? it.selectedBurgerTier : undefined,
+      };
+    });
+
+  const parsedDate = raw.createdAt ? new Date(String(raw.createdAt)) : null;
+  const createdAt = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : new Date().toISOString();
+  const validStatuses: OrderStatus[] = ['recibido', 'preparando', 'en_camino', 'listo_retiro', 'entregado'];
+  const status: OrderStatus = validStatuses.includes(raw.status) ? raw.status : 'recibido';
+
+  return {
+    id: String(raw.id),
+    userId: typeof raw.userId === 'string' ? raw.userId : null,
+    customerName: typeof raw.customerName === 'string' ? raw.customerName : 'Cliente OZ',
+    customerCedula: typeof raw.customerCedula === 'string' ? raw.customerCedula : String(raw.customerCedula ?? ''),
+    customerPhone: typeof raw.customerPhone === 'string' ? raw.customerPhone : '',
+    customerEmail: typeof raw.customerEmail === 'string' ? raw.customerEmail : undefined,
+    deliveryMethod: raw.deliveryMethod === 'pickup' ? 'pickup' : 'delivery',
+    deliveryAddress: typeof raw.deliveryAddress === 'string' ? raw.deliveryAddress : undefined,
+    apartment: typeof raw.apartment === 'string' ? raw.apartment : undefined,
+    deliveryCity: typeof raw.deliveryCity === 'string' ? raw.deliveryCity : undefined,
+    paymentMethod: raw.paymentMethod === 'card' ? 'card' : 'cash',
+    cashAmountToPayWith: Number.isFinite(Number(raw.cashAmountToPayWith)) ? Number(raw.cashAmountToPayWith) : undefined,
+    cardLast4: typeof raw.cardLast4 === 'string' ? raw.cardLast4 : undefined,
+    cardHolder: typeof raw.cardHolder === 'string' ? raw.cardHolder : undefined,
+    items,
+    subtotal: Number.isFinite(Number(raw.subtotal)) ? Number(raw.subtotal) : 0,
+    shippingFee: Number.isFinite(Number(raw.shippingFee)) ? Number(raw.shippingFee) : 0,
+    total: Number.isFinite(Number(raw.total)) ? Number(raw.total) : 0,
+    customerNotes: typeof raw.customerNotes === 'string' ? raw.customerNotes : undefined,
+    status,
+    createdAt,
+    whatsappMessage: typeof raw.whatsappMessage === 'string' ? raw.whatsappMessage : '',
+  };
+}
+
+function normalizeCart(raw: any): CartItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item) => item && typeof item === 'object' && item.product && typeof item.product === 'object')
+    .map((item) => ({
+      product: normalizeProduct(item.product, INITIAL_PRODUCT_MAP.get(item.product.id)),
+      quantity: Number.isFinite(Number(item.quantity)) && Number(item.quantity) > 0 ? Number(item.quantity) : 1,
+      selectedFlavors: Array.isArray(item.selectedFlavors) ? item.selectedFlavors.filter((f: any) => typeof f === 'string') : undefined,
+      extraFlavorsCost: Number.isFinite(Number(item.extraFlavorsCost)) ? Number(item.extraFlavorsCost) : 0,
+      observations: typeof item.observations === 'string' ? item.observations : undefined,
+      selectedBurgerTier: typeof item.selectedBurgerTier === 'string' ? item.selectedBurgerTier : undefined,
+      unitPrice: Number.isFinite(Number(item.unitPrice)) ? Number(item.unitPrice) : undefined,
+    }));
+}
+
+function normalizeSettings(raw: any, fallback: StoreSettings): StoreSettings {
+  const safeObj = raw && typeof raw === 'object' ? raw : {};
+  const rawShipping = Number(safeObj.shippingFee);
+  const rawThreshold = Number(safeObj.freeShippingThreshold);
+  return {
+    storeName: typeof safeObj.storeName === 'string' && safeObj.storeName.trim() ? safeObj.storeName : fallback.storeName,
+    whatsappNumber: typeof safeObj.whatsappNumber === 'string' && safeObj.whatsappNumber.trim() ? safeObj.whatsappNumber : fallback.whatsappNumber,
+    storeAddress: typeof safeObj.storeAddress === 'string' && safeObj.storeAddress.trim() ? safeObj.storeAddress : fallback.storeAddress,
+    storeHours: typeof safeObj.storeHours === 'string' && safeObj.storeHours.trim() ? safeObj.storeHours : fallback.storeHours,
+    shippingFee: Number.isFinite(rawShipping) ? rawShipping : fallback.shippingFee,
+    freeShippingThreshold: Number.isFinite(rawThreshold) ? rawThreshold : fallback.freeShippingThreshold,
+    logoUrl: cleanAssetUrl(safeObj.logoUrl, fallback.logoUrl),
+    heroImageUrl: cleanAssetUrl(safeObj.heroImageUrl, fallback.heroImageUrl || '/assets/aistudio/468615878_10162129815109555_8430383621970597375_n_6aa62de3.jpg'),
+    topBannerAnnouncement: typeof safeObj.topBannerAnnouncement === 'string' ? safeObj.topBannerAnnouncement : fallback.topBannerAnnouncement,
+    heroHeadline: typeof safeObj.heroHeadline === 'string' && safeObj.heroHeadline.trim() ? safeObj.heroHeadline : fallback.heroHeadline,
+    heroSubtitle: typeof safeObj.heroSubtitle === 'string' && safeObj.heroSubtitle.trim() ? safeObj.heroSubtitle : fallback.heroSubtitle,
+  };
+}
 
 function mergeCatalogWithFirestore(remoteDocs: Product[]): Product[] {
   const remoteMap = new Map<string, Product>();
@@ -68,7 +247,7 @@ function mergeCatalogWithFirestore(remoteDocs: Product[]): Product[] {
       if (remote.deleted === true) {
         continue;
       }
-      baseMerged.push({ ...baseProd, ...remote });
+      baseMerged.push(normalizeProduct(remote, baseProd));
     } else {
       baseMerged.push(baseProd);
     }
@@ -76,9 +255,10 @@ function mergeCatalogWithFirestore(remoteDocs: Product[]): Product[] {
 
   const customProducts = remoteDocs
     .filter((item) => item && item.id && !INITIAL_PRODUCT_IDS.has(item.id) && item.deleted !== true && item.name !== '__deleted__')
+    .map((item) => normalizeProduct(item))
     .sort((a, b) => {
-      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() || 0 : 0;
+      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() || 0 : 0;
       return timeB - timeA;
     });
 
@@ -306,18 +486,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     try {
       const savedV5 = localStorage.getItem('pizzeria_oz_products_v8');
       if (savedV5) {
-        const parsed: Product[] = JSON.parse(savedV5);
-        // Fix any legacy /src/assets paths in stored products
-        const cleaned = parsed.map(p => ({
-          ...p,
-          image: p.image && p.image.startsWith('/src/assets/images/')
-            ? p.image.replace('/src/assets/images/', '/assets/images/')
-            : p.image
-        }));
-        const metroCount = cleaned.filter(p => (p.category === 'pizza_metro' || p.id.startsWith('pzm-')) && p.subCategory).length;
-        const hasFurnitureImg = cleaned.some(p => p.image && p.image.includes('hero_store_showcase'));
-        if (metroCount >= 20 && !hasFurnitureImg) {
-          return cleaned;
+        const parsed = JSON.parse(savedV5);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .filter((p) => p && typeof p === 'object')
+            .map((p) => normalizeProduct(p, INITIAL_PRODUCT_MAP.get(p.id)));
+          const metroCount = cleaned.filter((p) => (p.category === 'pizza_metro' || p.id.startsWith('pzm-')) && p.subCategory).length;
+          const hasFurnitureImg = cleaned.some((p) => p.image && p.image.includes('hero_store_showcase'));
+          if (metroCount >= 20 && !hasFurnitureImg) {
+            return cleaned;
+          }
         }
       }
       // Migrate and purge legacy storage keys
@@ -390,7 +568,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem('pizzeria_oz_cart');
-      return saved ? JSON.parse(saved) : [];
+      return saved ? normalizeCart(JSON.parse(saved)) : [];
     } catch {
       return [];
     }
@@ -400,7 +578,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [user, setUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem('pizzeria_oz_user');
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      return parsed && typeof parsed === 'object' ? normalizeUser(parsed) : null;
     } catch {
       return null;
     }
@@ -410,7 +590,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [orders, setOrders] = useState<Order[]>(() => {
     try {
       const saved = localStorage.getItem('pizzeria_oz_orders');
-      return saved ? JSON.parse(saved) : INITIAL_DEMO_ORDERS;
+      if (!saved) return INITIAL_DEMO_ORDERS;
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return INITIAL_DEMO_ORDERS;
+      return parsed.map(normalizeOrder).filter((o): o is Order => o !== null);
     } catch {
       return INITIAL_DEMO_ORDERS;
     }
@@ -422,24 +605,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const saved = localStorage.getItem('pizzeria_oz_settings');
       if (saved) {
         const parsed = JSON.parse(saved);
-        const isLegacyHeadline = !parsed.heroHeadline || parsed.heroHeadline.includes('horno a la leña') || parsed.heroHeadline.includes('crujientes');
-        const isLegacyLogo = !parsed.logoUrl || parsed.logoUrl.includes('logo_d58d58db');
-        const isLegacyHeroImg = !parsed.heroImageUrl || parsed.heroImageUrl.includes('1792935618107');
-        const cleanLogo = parsed.logoUrl?.startsWith('/src/assets/images/')
-          ? parsed.logoUrl.replace('/src/assets/images/', '/assets/images/')
-          : parsed.logoUrl;
-        const cleanHeroImg = parsed.heroImageUrl?.startsWith('/src/assets/images/')
-          ? parsed.heroImageUrl.replace('/src/assets/images/', '/assets/images/')
-          : parsed.heroImageUrl;
+        if (parsed && typeof parsed === 'object') {
+          const isLegacyHeadline = !parsed.heroHeadline || String(parsed.heroHeadline).includes('horno a la leña') || String(parsed.heroHeadline).includes('crujientes');
+          const isLegacyLogo = !parsed.logoUrl || String(parsed.logoUrl).includes('logo_d58d58db');
+          const isLegacyHeroImg = !parsed.heroImageUrl || String(parsed.heroImageUrl).includes('1792935618107');
 
-        return {
-          ...DEFAULT_SETTINGS,
-          ...parsed,
-          logoUrl: isLegacyLogo ? '/assets/aistudio/logo2_a9100ce6.png' : cleanLogo,
-          heroImageUrl: isLegacyHeroImg ? DEFAULT_SETTINGS.heroImageUrl : cleanHeroImg,
-          heroHeadline: isLegacyHeadline ? DEFAULT_SETTINGS.heroHeadline : parsed.heroHeadline,
-          heroSubtitle: isLegacyHeadline ? DEFAULT_SETTINGS.heroSubtitle : parsed.heroSubtitle,
-        };
+          return normalizeSettings(
+            {
+              ...parsed,
+              logoUrl: isLegacyLogo ? '/assets/aistudio/logo2_a9100ce6.png' : parsed.logoUrl,
+              heroImageUrl: isLegacyHeroImg ? DEFAULT_SETTINGS.heroImageUrl : parsed.heroImageUrl,
+              heroHeadline: isLegacyHeadline ? DEFAULT_SETTINGS.heroHeadline : parsed.heroHeadline,
+              heroSubtitle: isLegacyHeadline ? DEFAULT_SETTINGS.heroSubtitle : parsed.heroSubtitle,
+            },
+            DEFAULT_SETTINGS
+          );
+        }
       }
       return DEFAULT_SETTINGS;
     } catch {
@@ -530,7 +711,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       unsubSettings = onSnapshot(doc(db, 'settings', 'global'), (docSnap) => {
         if (docSnap.exists()) {
           const remoteSettings = docSnap.data() as Partial<StoreSettings>;
-          setStoreSettings((prev) => ({ ...prev, ...remoteSettings }));
+          setStoreSettings((prev) => normalizeSettings(remoteSettings, prev));
         }
       }, (err) => {
         handleFirestoreError(err, OperationType.GET, 'settings/global', false);
@@ -546,13 +727,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (!snapshot.empty) {
           const remoteOrders: Order[] = [];
           snapshot.forEach((docSnap) => {
-            const data = docSnap.data() as Order;
-            if (data && data.id) {
-              remoteOrders.push(data);
+            const normalized = normalizeOrder({ ...docSnap.data(), id: docSnap.data()?.id || docSnap.id });
+            if (normalized) {
+              remoteOrders.push(normalized);
             }
           });
           if (remoteOrders.length > 0) {
-            remoteOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            remoteOrders.sort((a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0));
             setOrders(remoteOrders);
           }
         }
@@ -570,16 +751,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (!snapshot.empty) {
           const remoteUsers: User[] = [];
           snapshot.forEach((docSnap) => {
-            const data = docSnap.data() as User;
-            if (data && data.id) {
-              remoteUsers.push(data);
+            const data = docSnap.data();
+            if (data && (data.id || docSnap.id)) {
+              remoteUsers.push(normalizeUser({ ...data, id: data.id || docSnap.id }));
             }
           });
           if (remoteUsers.length > 0) {
             setAllRegisteredUsers((prev) => {
               const mergedMap = new Map<string, User>();
               for (const u of prev) {
-                mergedMap.set(u.id, u);
+                mergedMap.set(u.id, normalizeUser(u));
               }
               for (const ru of remoteUsers) {
                 mergedMap.set(ru.id, ru);
@@ -593,11 +774,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
             setUser((currentUser) => {
               if (!currentUser) return null;
-              const cleanCurrent = currentUser.cedula.replace(/[^0-9]/g, '');
+              const cleanCurrent = String(currentUser.cedula || '').replace(/[^0-9]/g, '');
               const match = remoteUsers.find(
-                (ru) => ru.id === currentUser.id || ru.cedula.replace(/[^0-9]/g, '') === cleanCurrent
+                (ru) =>
+                  ru.id === currentUser.id ||
+                  (cleanCurrent && String(ru.cedula || '').replace(/[^0-9]/g, '') === cleanCurrent)
               );
-              return match ? { ...currentUser, ...match } : currentUser;
+              return match ? normalizeUser({ ...currentUser, ...match }) : currentUser;
             });
           }
         }
@@ -620,7 +803,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [contactMessages, setContactMessages] = useState<ContactMessage[]>(() => {
     try {
       const saved = localStorage.getItem('pizzeria_oz_contact_msgs');
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -649,7 +833,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [allRegisteredUsers, setAllRegisteredUsers] = useState<User[]>(() => {
     try {
       const stored = localStorage.getItem('pizzeria_oz_registered_users');
-      return stored ? JSON.parse(stored) : [DEMO_USER];
+      const parsed = stored ? JSON.parse(stored) : [DEMO_USER];
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed.map(normalizeUser) : [DEMO_USER];
     } catch {
       return [DEMO_USER];
     }
@@ -798,13 +983,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setCart([]);
   };
 
-  const totalCartItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const totalCartItems = cart.reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0);
 
   // Each item total = (unit price + extra flavor price) * quantity
   const cartSubtotal = cart.reduce((sum, item) => {
-    const basePrice = item.unitPrice ?? item.product.price;
-    const itemUnitPrice = basePrice + (item.extraFlavorsCost || 0);
-    return sum + itemUnitPrice * item.quantity;
+    const basePrice = Number(item?.unitPrice ?? item?.product?.price) || 0;
+    const itemUnitPrice = basePrice + (Number(item?.extraFlavorsCost) || 0);
+    return sum + itemUnitPrice * (Number(item?.quantity) || 0);
   }, 0);
 
   // Auth operations using Cédula
@@ -815,20 +1000,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     try {
       const stored = localStorage.getItem('pizzeria_oz_registered_users');
       if (stored) {
-        const localParsed: User[] = JSON.parse(stored);
-        const existingIds = new Set(savedUsers.map((u) => u.id));
-        for (const lu of localParsed) {
-          if (!existingIds.has(lu.id)) savedUsers.push(lu);
+        const localParsed = JSON.parse(stored);
+        if (Array.isArray(localParsed)) {
+          const existingIds = new Set(savedUsers.map((u) => u.id));
+          for (const lu of localParsed) {
+            const norm = normalizeUser(lu);
+            if (!existingIds.has(norm.id)) savedUsers.push(norm);
+          }
         }
       }
     } catch {}
 
     const found = savedUsers.find(
-      (u) => u.cedula.replace(/[^0-9]/g, '') === digitsOnly
+      (u) => Boolean(digitsOnly) && String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
     );
     if (found) {
-      setUser(found);
-      showToast(`¡Bienvenido de nuevo, ${found.name}!`);
+      const normalizedFound = normalizeUser(found);
+      setUser(normalizedFound);
+      showToast(`¡Bienvenido de nuevo, ${normalizedFound.name}!`);
       return true;
     }
 
@@ -935,7 +1124,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   // Orders
-  const userOrders = orders.filter((o) => !user || o.userId === user.id || o.customerCedula === user.cedula);
+  const userOrders = orders.filter((o) => {
+    if (!o) return false;
+    if (!user) return true;
+    const orderCedula = String(o.customerCedula || '').replace(/[^0-9]/g, '');
+    const userCedula = String(user.cedula || '').replace(/[^0-9]/g, '');
+    return o.userId === user.id || o.customerCedula === user.cedula || (Boolean(userCedula) && orderCedula === userCedula);
+  });
 
 
   // Loyalty stamp increment
@@ -950,7 +1145,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           const totalEarned = (u.loyalty?.totalStampsEarned ?? 0) + count;
           const tier = totalEarned >= 16 ? 'maestro_vip' : totalEarned >= 8 ? 'explorador' : 'amigo';
           
-          const cleanCedula = u.cedula.replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
+          const cleanCedula = String(u.cedula || '').replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
           const updatedLoyalty = {
             stampsCount: stampsRemaining,
             totalStampsEarned: totalEarned,
@@ -985,7 +1180,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setAllRegisteredUsers((prevUsers) => {
       const updated = prevUsers.map((u) => {
         if (u.id === userId) {
-          const cleanCedula = u.cedula.replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
+          const cleanCedula = String(u.cedula || '').replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
           const updatedLoyalty = {
             ...(u.loyalty || {
               totalStampsEarned: stamps,
@@ -1031,11 +1226,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       paymentDetail += ` (Terminada en ${order.cardLast4})`;
     }
 
-    const itemsText = order.items
+    const itemsText = (Array.isArray(order.items) ? order.items : [])
       .map((it) => {
         let flavorInfo = '';
         if (it.selectedFlavors && it.selectedFlavors.length > 0) {
-          const isArmaTu = it.productId.includes('arma-tu');
+          const isArmaTu = String(it.productId || '').includes('arma-tu');
           flavorInfo = `\n   ↳ ${isArmaTu ? 'Sabores' : 'Adicionales'}: ${it.selectedFlavors.join(' + ')}${
             it.extraFlavorsCost && it.extraFlavorsCost > 0
               ? ` (+$${it.extraFlavorsCost} extra)`
@@ -1048,7 +1243,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (it.observations && it.observations.trim()) {
           obsInfo = `\n   ↳ 📝 Obs: ${it.observations.trim()}`;
         }
-        return `🍕 ${it.quantity}x ${it.productName} — $${it.subtotal.toLocaleString('es-AR')} ($${it.unitPrice.toLocaleString('es-AR')} c/u)${flavorInfo}${obsInfo}`;
+        const sub = Number(it.subtotal || 0).toLocaleString('es-AR');
+        const unit = Number(it.unitPrice || 0).toLocaleString('es-AR');
+        return `🍕 ${it.quantity}x ${it.productName} — $${sub} ($${unit} c/u)${flavorInfo}${obsInfo}`;
       })
       .join('\n');
 
@@ -1058,13 +1255,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     const notesText = order.customerNotes ? `\n📝 *Aclaraciones / Notas:*\n${order.customerNotes}` : '';
 
-    const cleanCardCedula = order.customerCedula.replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
+    const cleanCardCedula = String(order.customerCedula || '').replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
     const loyaltyCardNum = `OZ-${cleanCardCedula.slice(0, 4)}-${cleanCardCedula.slice(4)}`;
     const loyaltySection = `\n⭐ *Club Fidelidad OZ (Tarjeta 8 Porciones):*\n• Tarjeta: ${loyaltyCardNum}\n• Porciones acumuladas: ${user?.loyalty?.stampsCount ?? 3}/8 porciones${
       isRewardRedeemActive ? '\n🎁 *¡PREMIO APLICADO! Canje de Pizzeta Muzzarella o Fainá Gratis*' : ''
     }`;
 
-    const discountApplied = Math.max(0, order.subtotal + order.shippingFee - order.total);
+    const discountApplied = Math.max(0, (Number(order.subtotal) || 0) + (Number(order.shippingFee) || 0) - (Number(order.total) || 0));
 
     return `🍕 *¡Hola ${storeSettings.storeName}! Quiero confirmar mi pedido.*
 
@@ -1082,16 +1279,16 @@ ${addressText}
 ${itemsText}
 
 ──────────────────
-*Subtotal:* ${order.subtotal.toLocaleString('es-AR')}
-*Envío:* ${order.shippingFee === 0 ? '¡GRATIS! (Superó los $250)' : `${order.shippingFee.toLocaleString('es-AR')}`}
-${discountApplied > 0 ? `*Descuento Premio Tarjeta:* -$${discountApplied.toLocaleString('es-AR')}\n` : ''}*TOTAL A PAGAR: $${order.total.toLocaleString('es-AR')}*
+*Subtotal:* ${Number(order.subtotal || 0).toLocaleString('es-AR')}
+*Envío:* ${order.shippingFee === 0 ? '¡GRATIS! (Superó los $250)' : `${Number(order.shippingFee || 0).toLocaleString('es-AR')}`}
+${discountApplied > 0 ? `*Descuento Premio Tarjeta:* -$${discountApplied.toLocaleString('es-AR')}\n` : ''}*TOTAL A PAGAR: $${Number(order.total || 0).toLocaleString('es-AR')}*
 ──────────────────${notesText}
 
 Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gracias!`;
   };
 
   const getWhatsAppUrl = (order: Order): string => {
-    const cleanNumber = storeSettings.whatsappNumber.replace(/[^0-9]/g, '');
+    const cleanNumber = String(storeSettings.whatsappNumber || '').replace(/[^0-9]/g, '');
     const message = formatWhatsAppMessage(order);
     return `https://api.whatsapp.com/send?phone=${cleanNumber}&text=${encodeURIComponent(message)}`;
   };
@@ -1218,11 +1415,11 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
   };
 
   const updateProduct = (updatedProduct: Product) => {
-    const productWithMeta: Product = {
+    const productWithMeta: Product = normalizeProduct({
       ...updatedProduct,
       deleted: false,
       updatedAt: new Date().toISOString(),
-    };
+    }, INITIAL_PRODUCT_MAP.get(updatedProduct.id));
     setProducts((prev) =>
       prev.map((p) => (p.id === productWithMeta.id ? productWithMeta : p))
     );
@@ -1236,11 +1433,11 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
   };
 
   const addProduct = (newProduct: Product) => {
-    const productWithMeta: Product = {
+    const productWithMeta: Product = normalizeProduct({
       ...newProduct,
       deleted: false,
       updatedAt: new Date().toISOString(),
-    };
+    });
     setProducts((prev) => [productWithMeta, ...prev]);
     setDoc(doc(db, 'products', productWithMeta.id), sanitizeForFirestore(productWithMeta))
       .then(() => {
