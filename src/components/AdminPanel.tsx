@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Lock,
@@ -26,13 +26,15 @@ import {
   Gift,
   Users,
   Sparkles,
+  Cloud,
+  RefreshCw,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Product, ProductCategory, OrderStatus } from '../types';
 import { STORE_CATEGORIES } from '../data/products';
 
 
-// Helper to compress uploaded images into lightweight base64 JPEG to preserve storage and ensure 100% offline & production durability
+// Helper to compress uploaded images into lightweight base64 JPEG to preserve storage and stay safely under Firestore 1MB limit
 const compressImageFile = (file: File, maxWidth = 800, maxHeight = 600, quality = 0.82): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -52,15 +54,30 @@ const compressImageFile = (file: File, maxWidth = 800, maxHeight = 600, quality 
           height = maxHeight;
         }
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
         const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        } else {
+        if (!ctx) {
           resolve(event.target?.result as string);
+          return;
         }
+
+        let currentQuality = quality;
+        let currentWidth = width;
+        let currentHeight = height;
+        let resultUrl = '';
+
+        for (let attempt = 0; attempt < 4; attempt++) {
+          canvas.width = currentWidth;
+          canvas.height = currentHeight;
+          ctx.clearRect(0, 0, currentWidth, currentHeight);
+          ctx.drawImage(img, 0, 0, currentWidth, currentHeight);
+          resultUrl = canvas.toDataURL('image/jpeg', currentQuality);
+          if (resultUrl.length <= 650000) break;
+          currentQuality = Math.max(0.5, currentQuality - 0.12);
+          currentWidth = Math.round(currentWidth * 0.82);
+          currentHeight = Math.round(currentHeight * 0.82);
+        }
+
+        resolve(resultUrl);
       };
       img.onerror = () => reject(new Error('Error al procesar la imagen'));
     };
@@ -95,6 +112,8 @@ export const AdminPanel: React.FC = () => {
     addProduct,
     deleteProduct,
     resetProductsToDefault,
+    isSyncingCloud,
+    syncLocalCatalogToCloud,
     storeSettings,
     updateStoreSettings,
     orders,
@@ -148,6 +167,21 @@ export const AdminPanel: React.FC = () => {
     heroSubtitle: storeSettings.heroSubtitle,
     logoUrl: storeSettings.logoUrl,
   });
+
+  useEffect(() => {
+    setTextsForm({
+      storeName: storeSettings.storeName,
+      whatsappNumber: storeSettings.whatsappNumber,
+      storeAddress: storeSettings.storeAddress,
+      storeHours: storeSettings.storeHours,
+      shippingFee: storeSettings.shippingFee,
+      freeShippingThreshold: storeSettings.freeShippingThreshold,
+      topBannerAnnouncement: storeSettings.topBannerAnnouncement,
+      heroHeadline: storeSettings.heroHeadline,
+      heroSubtitle: storeSettings.heroSubtitle,
+      logoUrl: storeSettings.logoUrl,
+    });
+  }, [storeSettings]);
 
   // Quick inline price editing
   const [quickPriceId, setQuickPriceId] = useState<string | null>(null);
@@ -248,7 +282,7 @@ export const AdminPanel: React.FC = () => {
       category: p.category,
       image: p.image,
       unit: p.unit,
-      supportsCustomFlavors: p.supportsCustomFlavors,
+      supportsCustomFlavors: Boolean(p.supportsCustomFlavors),
     });
   };
 
@@ -493,10 +527,25 @@ export const AdminPanel: React.FC = () => {
                       </select>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => syncLocalCatalogToCloud(false)}
+                        disabled={isSyncingCloud}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                        title="Publicar todos los cambios guardados en esta PC hacia los celulares en la nube"
+                      >
+                        {isSyncingCloud ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Cloud className="w-3.5 h-3.5" />
+                        )}
+                        <span>{isSyncingCloud ? 'Sincronizando...' : 'Sincronizar con Celulares'}</span>
+                      </button>
+
                       <button
                         onClick={openCreateModal}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 rounded-xl text-xs font-bold transition-all shadow-sm"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                       >
                         <Plus className="w-4 h-4" />
                         <span>+ Nuevo Producto</span>
@@ -508,13 +557,20 @@ export const AdminPanel: React.FC = () => {
                             resetProductsToDefault();
                           }
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-stone-800 hover:bg-stone-750 text-stone-300 border border-stone-700 rounded-xl text-xs transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-stone-800 hover:bg-stone-750 text-stone-300 border border-stone-700 rounded-xl text-xs transition-colors cursor-pointer"
                         title="Restablecer todos los productos a su estado original de fábrica"
                       >
                         <RotateCcw className="w-3.5 h-3.5 text-stone-400" />
                         <span className="hidden sm:inline">Restablecer Menú</span>
                       </button>
                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-950/30 border border-emerald-800/40 text-emerald-300 text-[11px]">
+                    <Cloud className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                    <span>
+                      Cada producto nuevo, precio o foto se guarda en la nube en tiempo real para que aparezca al instante en los celulares.
+                    </span>
                   </div>
 
                   {/* Products Table */}
