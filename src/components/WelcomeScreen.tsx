@@ -235,11 +235,11 @@ export const WelcomeScreen: React.FC = () => {
               <div className="flex items-center justify-between pb-3 border-b border-stone-800">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm border border-amber-500/40">
-                    {user.name.charAt(0).toUpperCase()}
+                    {(user.name || user.cedula || 'C').charAt(0).toUpperCase()}
                   </div>
                   <div>
                     <div className="text-xs text-stone-400">Sesión iniciada como</div>
-                    <div className="text-sm font-bold text-white">{user.name}</div>
+                    <div className="text-sm font-bold text-white">{user.name || `Cliente CI ${user.cedula}`}</div>
                   </div>
                 </div>
                 <button
