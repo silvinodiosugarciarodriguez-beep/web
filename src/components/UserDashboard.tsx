@@ -12,6 +12,11 @@ import {
   Save,
   Sparkles,
   AlertCircle,
+  RotateCcw,
+  Lock,
+  Check,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Order } from '../types';
@@ -23,6 +28,8 @@ export const UserDashboard: React.FC = () => {
     logout,
     userOrders,
     updateProfile,
+    changeUserPassword,
+    reorderFromOrder,
     storeSettings,
     getWhatsAppUrl,
     isUserDashboardOpen,
@@ -48,6 +55,13 @@ export const UserDashboard: React.FC = () => {
     user?.city && user.city.trim().toLowerCase() !== 'buenos aires' ? user.city : 'Melo'
   );
   const [apartment, setApartment] = useState(user?.apartment || '');
+
+  // Password Change State
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showChangePass, setShowChangePass] = useState(false);
+  const [passwordFeedback, setPasswordFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
   React.useEffect(() => {
     setActiveTab(dashboardInitialTab);
@@ -93,6 +107,28 @@ export const UserDashboard: React.FC = () => {
       city: city.trim() || 'Melo',
       apartment: apartment.trim(),
     });
+  };
+
+  const handleChangePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordFeedback(null);
+    if (newPassword.length < 4) {
+      setPasswordFeedback({ type: 'error', text: 'La nueva contraseña debe tener al menos 4 caracteres.' });
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordFeedback({ type: 'error', text: 'Las nuevas contraseñas no coinciden.' });
+      return;
+    }
+    const res = changeUserPassword(currentPassword, newPassword);
+    if (!res.ok) {
+      setPasswordFeedback({ type: 'error', text: res.error || 'No se pudo cambiar la contraseña.' });
+      return;
+    }
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setPasswordFeedback({ type: 'success', text: 'Contraseña actualizada correctamente.' });
   };
 
   return (
@@ -346,11 +382,20 @@ export const UserDashboard: React.FC = () => {
 
                       {/* Actions footer */}
                       <div className="pt-3 border-t border-stone-100 flex flex-wrap items-center justify-end gap-2.5">
-                        {/* WhatsApp dispatch & receipt buttons */}
-                        <div className="flex items-center gap-2">
+                        {/* Reorder, Receipt & WhatsApp buttons */}
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => reorderFromOrder(order)}
+                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            <span>Volver a pedir</span>
+                          </button>
+
                           <button
                             onClick={() => setSelectedOrderReceipt(order)}
-                            className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5"
+                            className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                           >
                             <Receipt className="w-3.5 h-3.5" />
                             <span>Ver Ticket</span>
@@ -498,6 +543,111 @@ export const UserDashboard: React.FC = () => {
                   </button>
                 </div>
               </form>
+
+              {/* Change Password Section */}
+              {user && user.id !== 'usr-demo-pizzeria' && (
+                <div className="mt-8 pt-6 border-t border-stone-200">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Lock className="w-4 h-4 text-amber-700" />
+                    <h3 className="text-sm font-bold text-stone-900">Cambiar Contraseña</h3>
+                  </div>
+                  <p className="text-xs text-stone-500 mb-4">
+                    Actualizá la contraseña con la que ingresás usando tu Cédula.
+                  </p>
+
+                  <form onSubmit={handleChangePasswordSubmit} className="space-y-3 bg-stone-50 border border-stone-200 rounded-xl p-4">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-medium text-stone-700">
+                          Contraseña actual *
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowChangePass((v) => !v)}
+                          className="text-[11px] font-semibold text-amber-700 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
+                        >
+                          {showChangePass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          <span>{showChangePass ? 'Ocultar claves' : 'Ver claves'}</span>
+                        </button>
+                      </div>
+                      <input
+                        type={showChangePass ? 'text' : 'password'}
+                        required
+                        value={currentPassword}
+                        onChange={(e) => {
+                          setCurrentPassword(e.target.value);
+                          if (passwordFeedback) setPasswordFeedback(null);
+                        }}
+                        placeholder="Ingresá tu contraseña actual"
+                        className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-stone-700 mb-1">
+                          Nueva contraseña * (4+ caracteres)
+                        </label>
+                        <input
+                          type={showChangePass ? 'text' : 'password'}
+                          required
+                          minLength={4}
+                          value={newPassword}
+                          onChange={(e) => {
+                            setNewPassword(e.target.value);
+                            if (passwordFeedback) setPasswordFeedback(null);
+                          }}
+                          placeholder="4 o más caracteres (puede ser larga)"
+                          className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-stone-700 mb-1">
+                          Repetir nueva contraseña *
+                        </label>
+                        <input
+                          type={showChangePass ? 'text' : 'password'}
+                          required
+                          minLength={4}
+                          value={confirmNewPassword}
+                          onChange={(e) => {
+                            setConfirmNewPassword(e.target.value);
+                            if (passwordFeedback) setPasswordFeedback(null);
+                          }}
+                          placeholder="Repetí tu nueva contraseña"
+                          className="w-full px-3.5 py-2 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+                    </div>
+
+                    {passwordFeedback && (
+                      <div
+                        className={`p-2.5 rounded-lg text-xs flex items-center gap-2 border ${
+                          passwordFeedback.type === 'success'
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                            : 'bg-rose-50 border-rose-200 text-rose-800'
+                        }`}
+                      >
+                        {passwordFeedback.type === 'success' ? (
+                          <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                        )}
+                        <span>{passwordFeedback.text}</span>
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Actualizar Contraseña</span>
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           )}
 
