@@ -1134,7 +1134,7 @@ export const AdminPanel: React.FC = () => {
                       <div className="px-3 py-2 bg-stone-900/90 rounded-xl border border-stone-800 text-center">
                         <div className="text-xs text-stone-400">Premios Pendientes</div>
                         <div className="text-lg font-bold text-emerald-400 font-mono">
-                          {allRegisteredUsers.reduce((sum, u) => sum + (u.loyalty?.unclaimedRewards || (u.loyalty?.stampsCount === 8 ? 1 : 0)), 0)}
+                          {allRegisteredUsers.reduce((sum, u) => sum + (u.loyalty?.unclaimedRewards ?? (u.loyalty?.stampsCount === 8 ? 1 : 0)), 0)}
                         </div>
                       </div>
                     </div>
@@ -1242,7 +1242,7 @@ export const AdminPanel: React.FC = () => {
                             </div>
 
                             {/* Control Buttons for Admin */}
-                            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                            <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 self-end md:self-center">
                               <button
                                 type="button"
                                 onClick={() => adjustUserLoyalty(client.id, Math.max(0, stamps - 1), unclaimed)}
@@ -1270,6 +1270,20 @@ export const AdminPanel: React.FC = () => {
                               >
                                 <Gift className="w-3.5 h-3.5" />
                                 <span>+1 Premio</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextStamps = (client.loyalty?.unclaimedRewards ?? 0) === 0 && stamps >= 8 ? 0 : stamps;
+                                  adjustUserLoyalty(client.id, nextStamps, Math.max(0, unclaimed - 1));
+                                }}
+                                disabled={unclaimed <= 0}
+                                className="px-3 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900 border border-rose-500/40 text-rose-200 text-xs font-bold transition-all shadow-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                                title="Marcar 1 premio como entregado / canjeado en el local"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Canjear / -1 Premio</span>
                               </button>
                             </div>
                           </div>
