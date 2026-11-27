@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, SlidersHorizontal, Sparkles, UserPlus, LogIn, CheckCircle2, Flame, Truck, CreditCard, Ruler, Pizza, Info, Tag, Clock, ChevronDown, AlertCircle } from 'lucide-react';
+import { Search, SlidersHorizontal, Sparkles, UserPlus, LogIn, CheckCircle2, Flame, Truck, CreditCard, Ruler, Pizza, Info, Tag, Clock, ChevronDown, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { STORE_CATEGORIES } from '../data/products';
 import { ProductCard } from './ProductCard';
@@ -10,6 +10,7 @@ export const ProductCatalog: React.FC = () => {
     user,
     register,
     login,
+    activateLegacyUserPassword,
     loginAsDemo,
     storeSettings,
     selectedCategory,
@@ -30,6 +31,9 @@ export const ProductCatalog: React.FC = () => {
   const [cedulaInput, setCedulaInput] = useState('');
   const [phoneInput, setPhoneInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
+  const [showPasswordInput, setShowPasswordInput] = useState(false);
+  const [needsLegacySetup, setNeedsLegacySetup] = useState(false);
+  const [legacyPhoneLast4, setLegacyPhoneLast4] = useState('');
   const [addressInput, setAddressInput] = useState('');
   const [cityInput, setCityInput] = useState('Melo');
   const [inlineAuthError, setInlineAuthError] = useState<string | null>(null);
@@ -91,12 +95,27 @@ export const ProductCatalog: React.FC = () => {
 
     setIsSubmittingAuth(true);
     try {
-      const result = await login(cedulaInput.trim(), passwordInput);
+      let result;
+      if (needsLegacySetup) {
+        if (passwordInput.length < 4) {
+          setInlineAuthError('La contraseña debe tener al menos 4 caracteres.');
+          return;
+        }
+        result = await activateLegacyUserPassword(cedulaInput.trim(), legacyPhoneLast4, passwordInput);
+      } else {
+        result = await login(cedulaInput.trim(), passwordInput);
+      }
+
       if (!result.ok || !result.user) {
+        if (result.needsPasswordSetup) {
+          setNeedsLegacySetup(true);
+        }
         setInlineAuthError(result.error || 'Cédula o contraseña incorrecta.');
         return;
       }
       setPasswordInput('');
+      setNeedsLegacySetup(false);
+      setLegacyPhoneLast4('');
       const existing = result.user;
       const needsProfile =
         !existing.name?.trim() ||
@@ -217,6 +236,7 @@ export const ProductCatalog: React.FC = () => {
                     onClick={() => {
                       setRegMode('register');
                       setInlineAuthError(null);
+                      setNeedsLegacySetup(false);
                     }}
                     className={`py-2 rounded-md transition-all ${
                       regMode === 'register'
@@ -231,6 +251,7 @@ export const ProductCatalog: React.FC = () => {
                     onClick={() => {
                       setRegMode('login');
                       setInlineAuthError(null);
+                      setNeedsLegacySetup(false);
                     }}
                     className={`py-2 rounded-md transition-all ${
                       regMode === 'login'
@@ -314,20 +335,30 @@ export const ProductCatalog: React.FC = () => {
 
                       <div>
                         <label className="block text-xs font-semibold text-stone-700 mb-1">
-                          Contraseña *
+                          Contraseña * (4 o más caracteres)
                         </label>
-                        <input
-                          type="password"
-                          required
-                          minLength={4}
-                          value={passwordInput}
-                          onChange={(e) => {
-                            setPasswordInput(e.target.value);
-                            if (inlineAuthError) setInlineAuthError(null);
-                          }}
-                          placeholder="Mínimo 4 caracteres"
-                          className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
-                        />
+                        <div className="relative">
+                          <input
+                            type={showPasswordInput ? 'text' : 'password'}
+                            required
+                            minLength={4}
+                            value={passwordInput}
+                            onChange={(e) => {
+                              setPasswordInput(e.target.value);
+                              if (inlineAuthError) setInlineAuthError(null);
+                            }}
+                            placeholder="4+ caracteres (sin límite)"
+                            className="w-full pl-3.5 pr-10 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPasswordInput((v) => !v)}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-500 hover:text-stone-800 cursor-pointer"
+                            aria-label={showPasswordInput ? 'Ocultar contraseña' : 'Ver contraseña'}
+                          >
+                            {showPasswordInput ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -400,18 +431,49 @@ export const ProductCatalog: React.FC = () => {
                       <label className="block text-xs font-semibold text-stone-700 mb-1">
                         Contraseña
                       </label>
-                      <input
-                        type="password"
-                        required
-                        value={passwordInput}
-                        onChange={(e) => {
-                          setPasswordInput(e.target.value);
-                          if (inlineAuthError) setInlineAuthError(null);
-                        }}
-                        placeholder="••••••••"
-                        className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showPasswordInput ? 'text' : 'password'}
+                          required
+                          value={passwordInput}
+                          onChange={(e) => {
+                            setPasswordInput(e.target.value);
+                            if (inlineAuthError) setInlineAuthError(null);
+                          }}
+                          placeholder="Ingresá tu contraseña"
+                          className="w-full pl-3.5 pr-10 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPasswordInput((v) => !v)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-500 hover:text-stone-800 cursor-pointer"
+                          aria-label={showPasswordInput ? 'Ocultar contraseña' : 'Ver contraseña'}
+                        >
+                          {showPasswordInput ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
+
+                    {needsLegacySetup && (
+                      <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
+                        <div className="text-xs font-bold text-amber-950">
+                          Activá la contraseña de tu cuenta existente
+                        </div>
+                        <p className="text-[11px] text-amber-900">
+                          Ingresá los <strong>últimos 4 dígitos de tu celular</strong> registrado para activar esta clave y entrar:
+                        </p>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          required
+                          value={legacyPhoneLast4}
+                          onChange={(e) => setLegacyPhoneLast4(e.target.value.replace(/[^0-9]/g, ''))}
+                          placeholder="Ej: 3456"
+                          className="w-full px-3 py-2 text-sm bg-white border border-amber-400 rounded-lg font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+                    )}
 
                     {inlineAuthError && (
                       <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
@@ -426,7 +488,13 @@ export const ProductCatalog: React.FC = () => {
                       className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-stone-900 hover:bg-stone-800 disabled:opacity-60 text-white rounded-xl text-sm font-bold transition-all shadow-sm active:scale-[0.99]"
                     >
                       <LogIn className="w-4 h-4 text-amber-400" />
-                      <span>{isSubmittingAuth ? 'Verificando...' : 'Ingresar con Cédula'}</span>
+                      <span>
+                        {isSubmittingAuth
+                          ? 'Verificando...'
+                          : needsLegacySetup
+                          ? 'Activar Contraseña y Entrar'
+                          : 'Ingresar con Cédula'}
+                      </span>
                     </button>
                   </form>
                 )}
