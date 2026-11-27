@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, Truck, MessageSquare } from 'lucide-react';
+import { X, Trash2, Plus, Minus, ArrowRight, ShoppingBag, Truck, MessageSquare, Gift, AlertCircle } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { getProductCustomization } from '../utils/productCustomization';
 
@@ -17,7 +17,10 @@ export const CartDrawer: React.FC = () => {
     clearCart,
     cartSubtotal,
     storeSettings,
+    isStoreCurrentlyOpen,
     setIsCheckoutModalOpen,
+    isRewardRedeemActive,
+    setIsRewardRedeemActive,
   } = useStore();
 
   const [editingObsIndex, setEditingObsIndex] = useState<number | null>(null);
@@ -27,8 +30,19 @@ export const CartDrawer: React.FC = () => {
 
   const freeDeliveryRemaining = Math.max(0, storeSettings.freeShippingThreshold - cartSubtotal);
   const progressPercent = Math.min(100, Math.round((cartSubtotal / storeSettings.freeShippingThreshold) * 100));
+  const isStoreClosed = !isStoreCurrentlyOpen;
+  const hasUnclaimedReward = Boolean(
+    user && ((user.loyalty?.unclaimedRewards ?? 0) > 0 || (user.loyalty?.stampsCount ?? 0) >= 8)
+  );
+  const rewardDiscount = isRewardRedeemActive && hasUnclaimedReward ? 270 : 0;
+  const estimatedShipping = cartSubtotal >= storeSettings.freeShippingThreshold ? 0 : storeSettings.shippingFee;
+  const estimatedTotal = Math.max(0, cartSubtotal + estimatedShipping - rewardDiscount);
 
   const handleProceedToCheckout = () => {
+    if (isStoreClosed) {
+      showToast(storeSettings.closedMessage || 'El local está cerrado momentáneamente.');
+      return;
+    }
     if (!user) {
       setIsCartOpen(false);
       openAuthModal('register');
@@ -298,6 +312,37 @@ export const CartDrawer: React.FC = () => {
         {/* Footer Subtotal & Action CTA */}
         {cart.length > 0 && (
           <div className="p-5 border-t border-stone-200 bg-stone-50 space-y-3">
+            {isStoreClosed && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block text-rose-800">Local cerrado / pedidos pausados</strong>
+                  <span className="text-[11px]">{storeSettings.closedMessage}</span>
+                </div>
+              </div>
+            )}
+
+            {hasUnclaimedReward && (
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Gift className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div className="text-[11px] text-emerald-950 leading-tight">
+                    <strong className="block text-emerald-800">¡Premio 8 Porciones listo!</strong>
+                    <span>Pizzeta Muzzarella o Fainá Gratis</span>
+                  </div>
+                </div>
+                <label className="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-lg border border-emerald-300 shadow-xs cursor-pointer select-none shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={isRewardRedeemActive}
+                    onChange={(e) => setIsRewardRedeemActive(e.target.checked)}
+                    className="rounded text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-[11px] font-bold text-emerald-800">Canjear (-$270)</span>
+                </label>
+              </div>
+            )}
+
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between text-stone-600">
                 <span>Subtotal ({cart.reduce((s, i) => s + i.quantity, 0)} productos):</span>
@@ -306,20 +351,26 @@ export const CartDrawer: React.FC = () => {
               <div className="flex justify-between text-stone-600">
                 <span>Envío a domicilio:</span>
                 <span className="font-mono font-medium">
-                  {cartSubtotal >= storeSettings.freeShippingThreshold ? (
+                  {estimatedShipping === 0 ? (
                     <span className="text-emerald-700 font-bold">¡GRATIS!</span>
                   ) : (
                     `$${storeSettings.shippingFee}`
                   )}
                 </span>
               </div>
+              {rewardDiscount > 0 && (
+                <div className="flex justify-between text-emerald-700 font-semibold">
+                  <span className="flex items-center gap-1">
+                    <Gift className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Premio Club 8 Porciones</span>
+                  </span>
+                  <span className="font-mono font-bold">-$270</span>
+                </div>
+              )}
               <div className="pt-2 border-t border-stone-200 flex justify-between items-baseline font-bold text-stone-900 text-base">
                 <span>Total Estimado:</span>
                 <span className="text-xl font-mono text-stone-950">
-                  ${(
-                    cartSubtotal +
-                    (cartSubtotal >= storeSettings.freeShippingThreshold ? 0 : storeSettings.shippingFee)
-                  ).toLocaleString('es-AR')}
+                  ${estimatedTotal.toLocaleString('es-AR')}
                 </span>
               </div>
             </div>
@@ -335,10 +386,17 @@ export const CartDrawer: React.FC = () => {
 
               <button
                 onClick={handleProceedToCheckout}
-                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 bg-stone-900 hover:bg-stone-800 text-white rounded-xl font-bold text-sm transition-all shadow-md active:scale-[0.98] cursor-pointer"
+                disabled={isStoreClosed}
+                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 bg-stone-900 hover:bg-stone-800 disabled:bg-stone-400 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm transition-all shadow-md active:scale-[0.98] cursor-pointer"
               >
-                <span>{user ? 'Continuar al Pago' : 'Registrate para Pedir'}</span>
-                <ArrowRight className="w-4 h-4 text-amber-400" />
+                <span>
+                  {isStoreClosed
+                    ? 'Cocina Cerrada Ahora'
+                    : user
+                    ? 'Continuar al Pago'
+                    : 'Registrate para Pedir'}
+                </span>
+                {!isStoreClosed && <ArrowRight className="w-4 h-4 text-amber-400" />}
               </button>
             </div>
           </div>
