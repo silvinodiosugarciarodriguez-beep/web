@@ -24,6 +24,7 @@ export const CheckoutModal: React.FC = () => {
     cart,
     cartSubtotal,
     storeSettings,
+    isStoreCurrentlyOpen,
     user,
     createOrder,
     updateProfile,
@@ -150,9 +151,16 @@ export const CheckoutModal: React.FC = () => {
   const parsedCash = parseFloat(cashBillAmount) || 0;
   const cashChange = parsedCash > finalTotal ? parsedCash - finalTotal : 0;
 
+  const isStoreClosed = !isStoreCurrentlyOpen;
+
   const handleSubmitOrder = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+
+    if (isStoreClosed) {
+      setFormError(storeSettings.closedMessage || 'El local está cerrado momentáneamente.');
+      return;
+    }
 
     // Basic Validations
     if (!customerName.trim()) {
@@ -273,7 +281,16 @@ export const CheckoutModal: React.FC = () => {
 
         {/* Scrollable Form Body */}
         <form onSubmit={handleSubmitOrder} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
-          
+          {isStoreClosed && (
+            <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl flex items-start gap-2.5 text-xs text-rose-900">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+              <div>
+                <strong className="block text-rose-800">Local Cerrado / Pedidos Pausados</strong>
+                <span>{storeSettings.closedMessage}</span>
+              </div>
+            </div>
+          )}
+
           {/* Form Error Banner */}
           {formError && (
             <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2.5 text-xs text-rose-800">
@@ -696,7 +713,7 @@ export const CheckoutModal: React.FC = () => {
                     )}
                   </div>
                   <span className="font-mono tabular-nums text-stone-900 font-semibold">
-                    ${((item.product.price + (item.extraFlavorsCost || 0)) * item.quantity).toLocaleString('es-AR')}
+                    ${(((item.unitPrice ?? item.product.price) + (item.extraFlavorsCost || 0)) * item.quantity).toLocaleString('es-AR')}
                   </span>
                 </div>
               ))}
@@ -778,11 +795,11 @@ export const CheckoutModal: React.FC = () => {
 
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white rounded-lg font-bold text-sm transition-all shadow-sm"
+              disabled={isSubmitting || isStoreClosed}
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-700 hover:bg-emerald-800 disabled:bg-stone-400 disabled:cursor-not-allowed active:scale-[0.99] text-white rounded-lg font-bold text-sm transition-all shadow-sm"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>Confirmar y Enviar Pedido a WhatsApp OZ</span>
+              <span>{isStoreClosed ? 'Local Cerrado Momentáneamente' : 'Confirmar y Enviar Pedido a WhatsApp OZ'}</span>
             </button>
           </div>
 
