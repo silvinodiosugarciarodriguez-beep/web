@@ -12,8 +12,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const [imageLoaded, setImageLoaded] = useState(true);
   const [isAddedRecently, setIsAddedRecently] = useState(false);
 
+  const isSoldOut = product.available === false;
+
   const handleQuickAdd = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isSoldOut) {
+      showToast(`⚠️ "${product.name}" está agotado por hoy.`);
+      return;
+    }
     if (!user) {
       openAuthModal('register');
       showToast('⚠️ Nadie puede pedir sin estar registrado. Creá tu cuenta gratis con Cédula.');
@@ -71,9 +77,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             }
           }}
           referrerPolicy="no-referrer"
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${
+            isSoldOut ? 'opacity-60 grayscale-[45%]' : ''
+          }`}
           loading="lazy"
         />
+
+        {isSoldOut && (
+          <div className="absolute top-3 right-3 z-10 bg-rose-700 text-white text-[11px] font-extrabold px-2.5 py-1 rounded-md shadow-md uppercase tracking-wide">
+            Agotado hoy
+          </div>
+        )}
 
         {/* Status / Flavor Badge */}
         {product.category === 'promos_activas' ? (
@@ -147,17 +161,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
           <button
             onClick={handleQuickAdd}
-            disabled={isAddedRecently}
+            disabled={isAddedRecently || isSoldOut}
             aria-label={`Agregar ${product.name} al pedido`}
             className={`inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all active:scale-95 ${
-              isAddedRecently
+              isSoldOut
+                ? 'bg-rose-100 text-rose-700 border border-rose-200 cursor-not-allowed'
+                : isAddedRecently
                 ? 'bg-emerald-600 text-white'
                 : product.supportsCustomFlavors
                 ? 'bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold'
                 : 'bg-stone-900 hover:bg-stone-800 text-white'
             }`}
           >
-            {isAddedRecently ? (
+            {isSoldOut ? (
+              <span>Agotado hoy</span>
+            ) : isAddedRecently ? (
               <>
                 <Check className="w-3.5 h-3.5" />
                 <span>Agregado</span>
