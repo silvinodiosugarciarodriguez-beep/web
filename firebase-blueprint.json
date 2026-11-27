@@ -19,6 +19,7 @@
         "notes": { "type": "string" },
         "discountBadge": { "type": "string" },
         "featured": { "type": "boolean" },
+        "available": { "type": "boolean" },
         "deleted": { "type": "boolean" },
         "deletedAt": { "type": "string" },
         "updatedAt": { "type": "string" }
@@ -68,7 +69,13 @@
         "heroImageUrl": { "type": "string" },
         "topBannerAnnouncement": { "type": "string" },
         "heroHeadline": { "type": "string" },
-        "heroSubtitle": { "type": "string" }
+        "heroSubtitle": { "type": "string" },
+        "isStoreOpen": { "type": "boolean" },
+        "closedMessage": { "type": "string" },
+        "statusMode": { "type": "string" },
+        "autoOpenTime": { "type": "string" },
+        "autoCloseTime": { "type": "string" },
+        "autoOpenDays": { "type": "array" }
       },
       "required": ["storeName", "whatsappNumber", "shippingFee", "freeShippingThreshold"]
     },
