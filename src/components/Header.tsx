@@ -175,7 +175,7 @@ export const Header: React.FC = () => {
             >
               <UserIcon className="w-4 h-4 text-amber-400" />
               <span className="hidden md:inline">
-                {user ? user.name.split(' ')[0] : 'Ingresar'}
+                {user ? (user.name ? user.name.split(' ')[0] : 'Mi Perfil') : 'Ingresar'}
               </span>
               {user && (
                 <span className="text-[10px] text-stone-400 hidden xl:inline font-mono">
