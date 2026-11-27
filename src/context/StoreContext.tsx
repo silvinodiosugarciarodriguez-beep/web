@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, ReactNod
 import { Product, CartItem, User, Order, ContactMessage, DeliveryMethod, PaymentMethod, OrderStatus, BurgerTier } from '../types';
 import { INITIAL_PRODUCTS } from '../data/products';
 import { calculateExtraFlavorsCost } from '../data/pizzaFlavors';
+import { hashPassword, verifyPassword } from '../utils/password';
 
 enum OperationType {
   CREATE = 'create',
@@ -119,11 +120,17 @@ function normalizeUser(raw: any): User {
     id: typeof safeObj.id === 'string' && safeObj.id.trim() ? safeObj.id : `usr-${Date.now().toString(36)}`,
     name: typeof safeObj.name === 'string' && safeObj.name.trim() ? safeObj.name : 'Cliente OZ',
     cedula,
-    password: typeof safeObj.password === 'string' ? safeObj.password : undefined,
+    password: typeof safeObj.password === 'string' && safeObj.password ? safeObj.password : undefined,
+    passwordHash: typeof safeObj.passwordHash === 'string' && safeObj.passwordHash.includes(':') ? safeObj.passwordHash : undefined,
     email: typeof safeObj.email === 'string' ? safeObj.email : undefined,
     phone: typeof safeObj.phone === 'string' ? safeObj.phone : '',
     address: typeof safeObj.address === 'string' ? safeObj.address : '',
-    city: typeof safeObj.city === 'string' ? safeObj.city : '',
+    city:
+      typeof safeObj.city === 'string' &&
+      safeObj.city.trim() &&
+      safeObj.city.trim().toLowerCase() !== 'buenos aires'
+        ? safeObj.city
+        : 'Melo',
     apartment: typeof safeObj.apartment === 'string' ? safeObj.apartment : undefined,
     registeredAt: typeof safeObj.registeredAt === 'string' && safeObj.registeredAt ? safeObj.registeredAt : new Date().toISOString().split('T')[0],
     loyalty: {
@@ -328,8 +335,8 @@ interface StoreContextType {
   cartSubtotal: number;
   
   user: User | null;
-  login: (cedula: string, password?: string) => boolean;
-  register: (data: Omit<User, 'id' | 'registeredAt'>) => User;
+  login: (cedula: string, password?: string) => Promise<{ ok: boolean; error?: string; user?: User }>;
+  register: (data: Omit<User, 'id' | 'registeredAt'>) => Promise<{ user: User | null; error?: string }>;
   logout: () => void;
   updateProfile: (data: Partial<User>) => void;
   loginAsDemo: () => void;
@@ -362,8 +369,8 @@ interface StoreContextType {
   setIsAuthModalOpen: (open: boolean) => void;
   isUserDashboardOpen: boolean;
   setIsUserDashboardOpen: (open: boolean) => void;
-  dashboardInitialTab: 'pedidos' | 'fidelizacion' | 'perfil' | 'configuracion';
-  setDashboardInitialTab: (tab: 'pedidos' | 'fidelizacion' | 'perfil' | 'configuracion') => void;
+  dashboardInitialTab: 'pedidos' | 'fidelizacion' | 'perfil';
+  setDashboardInitialTab: (tab: 'pedidos' | 'fidelizacion' | 'perfil') => void;
   isCheckoutModalOpen: boolean;
   setIsCheckoutModalOpen: (open: boolean) => void;
   selectedProduct: Product | null;
@@ -423,7 +430,7 @@ const DEMO_USER: User = {
   email: 'gonzalo@ejemplo.com',
   phone: '+54 9 11 4920-1123',
   address: 'Calle Lavalle 1280',
-  city: 'Centro',
+  city: 'Melo',
   apartment: 'Piso 7, Dpto A',
   registeredAt: '2026-10-20',
   loyalty: {
@@ -447,7 +454,7 @@ const INITIAL_DEMO_ORDERS: Order[] = [
     deliveryMethod: 'delivery',
     deliveryAddress: 'Calle Lavalle 1280',
     apartment: 'Piso 7, Dpto A',
-    deliveryCity: 'Centro',
+    deliveryCity: 'Melo',
     paymentMethod: 'cash',
     cashAmountToPayWith: 500,
     items: [
@@ -821,7 +828,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setIsAuthModalOpen(true);
   };
   const [isUserDashboardOpen, setIsUserDashboardOpen] = useState(false);
-  const [dashboardInitialTab, setDashboardInitialTab] = useState<'pedidos' | 'perfil' | 'configuracion' | 'fidelizacion'>('pedidos');
+  const [dashboardInitialTab, setDashboardInitialTab] = useState<'pedidos' | 'perfil' | 'fidelizacion'>('pedidos');
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [lastPlacedOrder, setLastPlacedOrder] = useState<Order | null>(null);
@@ -992,77 +999,178 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return sum + itemUnitPrice * (Number(item?.quantity) || 0);
   }, 0);
 
-  // Auth operations using Cédula
-  const login = (cedula: string) => {
-    const cleanCedula = cedula.trim();
-    const digitsOnly = cleanCedula.replace(/[^0-9]/g, '');
-    let savedUsers: User[] = [...allRegisteredUsers];
+  // Helper to merge local and remote registered users by id
+  const loadMergedRegisteredUsers = async (fetchRemote: boolean): Promise<User[]> => {
+    const mergedMap = new Map<string, User>();
+    for (const u of allRegisteredUsers) {
+      mergedMap.set(u.id, normalizeUser(u));
+    }
     try {
       const stored = localStorage.getItem('pizzeria_oz_registered_users');
       if (stored) {
         const localParsed = JSON.parse(stored);
         if (Array.isArray(localParsed)) {
-          const existingIds = new Set(savedUsers.map((u) => u.id));
           for (const lu of localParsed) {
             const norm = normalizeUser(lu);
-            if (!existingIds.has(norm.id)) savedUsers.push(norm);
+            if (!mergedMap.has(norm.id)) {
+              mergedMap.set(norm.id, norm);
+            }
           }
         }
       }
     } catch {}
 
-    const found = savedUsers.find(
-      (u) => Boolean(digitsOnly) && String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
-    );
-    if (found) {
-      const normalizedFound = normalizeUser(found);
-      setUser(normalizedFound);
-      showToast(`¡Bienvenido de nuevo, ${normalizedFound.name}!`);
-      return true;
+    if (fetchRemote) {
+      try {
+        const snapshot = await getDocs(collection(db, 'users'));
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data && (data.id || docSnap.id)) {
+            const norm = normalizeUser({ ...data, id: data.id || docSnap.id });
+            mergedMap.set(norm.id, norm);
+          }
+        });
+        const merged = Array.from(mergedMap.values());
+        setAllRegisteredUsers(merged);
+        try {
+          localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(merged));
+        } catch {}
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, 'users', false);
+      }
     }
 
-    const formattedCardNum = `OZ-${digitsOnly.slice(-8).padStart(8, '0').slice(0, 4)}-${digitsOnly.slice(-8).padStart(8, '0').slice(4)}`;
-    const newUser: User = {
-      id: `usr-${Date.now().toString(36)}`,
-      name: `Cliente CI ${cleanCedula}`,
-      cedula: cleanCedula,
-      phone: '+54 9 11 5555-0000',
-      address: 'Dirección por definir',
-      city: 'Buenos Aires',
-      registeredAt: new Date().toISOString().split('T')[0],
-      loyalty: {
-        stampsCount: 1,
-        totalStampsEarned: 1,
-        completedCards: 0,
-        unclaimedRewards: 0,
-        tier: 'amigo',
-        cardNumber: formattedCardNum,
-      },
-    };
-    setUser(newUser);
-    setAllRegisteredUsers((prev) => {
-      const updatedList = [...prev.filter((u) => u.id !== newUser.id), newUser];
-      try {
-        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(updatedList));
-      } catch {}
-      return updatedList;
-    });
-    setDoc(doc(db, 'users', newUser.id), sanitizeForFirestore(newUser), { merge: true }).catch((err) => {
-      handleFirestoreError(err, OperationType.CREATE, `users/${newUser.id}`, false);
-    });
-    showToast(`Sesión iniciada con Cédula ${cleanCedula}.`);
-    return true;
+    return Array.from(mergedMap.values());
   };
 
-  const register = (data: Omit<User, 'id' | 'registeredAt'>) => {
-    const cleanCedula = data.cedula.replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
-    const formattedCardNum = `OZ-${cleanCedula.slice(0, 4)}-${cleanCedula.slice(4)}`;
+  const findRealUserByCedula = (usersList: User[], digitsOnly: string): User | undefined => {
+    if (!digitsOnly) return undefined;
+    const matches = usersList.filter(
+      (u) =>
+        u.id !== DEMO_USER.id &&
+        String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
+    );
+    if (matches.length === 0) return undefined;
+    return matches.find((u) => Boolean(u.passwordHash || u.password)) || matches[0];
+  };
+
+  // Auth operations using Cédula + Password verification
+  const login = async (cedula: string, password?: string): Promise<{ ok: boolean; error?: string; user?: User }> => {
+    const cleanCedula = cedula.trim();
+    const digitsOnly = cleanCedula.replace(/[^0-9]/g, '');
+    const enteredPassword = typeof password === 'string' ? password : '';
+
+    if (!digitsOnly) {
+      const msg = 'Ingresá un número de Cédula válido.';
+      showToast(msg);
+      return { ok: false, error: msg };
+    }
+    if (!enteredPassword) {
+      const msg = 'Ingresá tu contraseña para iniciar sesión.';
+      showToast(msg);
+      return { ok: false, error: msg };
+    }
+
+    let savedUsers = await loadMergedRegisteredUsers(false);
+    let found = findRealUserByCedula(savedUsers, digitsOnly);
+
+    // If not found locally (or missing credential fields), check Firestore directly
+    if (!found || (!found.passwordHash && !found.password)) {
+      savedUsers = await loadMergedRegisteredUsers(true);
+      found = findRealUserByCedula(savedUsers, digitsOnly);
+    }
+
+    if (!found) {
+      if (digitsOnly === '48123945') {
+        const msg = 'Para la cuenta de prueba usá el botón "Acceso rápido con Cédula Demo".';
+        showToast(msg);
+        return { ok: false, error: msg };
+      }
+      const msg = 'Cédula no registrada o contraseña incorrecta. Si es tu primera vez, creá tu cuenta.';
+      showToast(msg);
+      return { ok: false, error: msg };
+    }
+
+    if (!found.passwordHash && !found.password) {
+      const msg = 'Esta cuenta no tiene contraseña configurada. Tocá "Crear Cuenta" con tu Cédula para asignarle una.';
+      showToast(msg);
+      return { ok: false, error: msg };
+    }
+
+    const isPasswordValid = verifyPassword(enteredPassword, found.passwordHash, found.password);
+    if (!isPasswordValid) {
+      const msg = 'Contraseña incorrecta. Verificá tu contraseña e intentá nuevamente.';
+      showToast(msg);
+      return { ok: false, error: msg };
+    }
+
+    let authenticatedUser = normalizeUser(found);
+
+    // Upgrade legacy plaintext password to salted SHA-256 hash on successful login
+    if (!authenticatedUser.passwordHash && authenticatedUser.password) {
+      const upgraded: User = {
+        ...authenticatedUser,
+        passwordHash: hashPassword(enteredPassword),
+      };
+      delete upgraded.password;
+      authenticatedUser = upgraded;
+
+      setAllRegisteredUsers((prev) => {
+        const next = [...prev.filter((u) => u.id !== upgraded.id), upgraded];
+        try {
+          localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      setDoc(doc(db, 'users', upgraded.id), sanitizeForFirestore(upgraded)).catch((err) => {
+        handleFirestoreError(err, OperationType.UPDATE, `users/${upgraded.id}`, false);
+      });
+    }
+
+    setUser(authenticatedUser);
+    const displayName =
+      authenticatedUser.name && authenticatedUser.name !== 'Cliente OZ'
+        ? authenticatedUser.name
+        : `CI ${authenticatedUser.cedula}`;
+    showToast(`¡Bienvenido de nuevo, ${displayName}!`);
+    return { ok: true, user: authenticatedUser };
+  };
+
+  const register = async (data: Omit<User, 'id' | 'registeredAt'>): Promise<{ user: User | null; error?: string }> => {
+    const digitsOnly = data.cedula.replace(/[^0-9]/g, '');
+    const rawPassword = typeof data.password === 'string' ? data.password : '';
+
+    if (!digitsOnly) {
+      const msg = 'Ingresá un número de Cédula válido.';
+      showToast(msg);
+      return { user: null, error: msg };
+    }
+    if (rawPassword.length < 4) {
+      const msg = 'La contraseña debe tener al menos 4 caracteres.';
+      showToast(msg);
+      return { user: null, error: msg };
+    }
+
+    const savedUsers = await loadMergedRegisteredUsers(true);
+    const existing = findRealUserByCedula(savedUsers, digitsOnly);
+
+    if (existing && (existing.passwordHash || existing.password)) {
+      const msg = 'Ya existe una cuenta registrada con esta Cédula. Iniciá sesión con tu contraseña.';
+      showToast(msg);
+      return { user: null, error: msg };
+    }
+
+    const paddedCedula = digitsOnly.slice(-8).padStart(8, '0');
+    const formattedCardNum = `OZ-${paddedCedula.slice(0, 4)}-${paddedCedula.slice(4)}`;
+    const { password: _ignoredPlaintext, ...safeProfileData } = data;
+    const hashed = hashPassword(rawPassword);
 
     const newUser: User = {
-      ...data,
-      id: `usr-${Date.now().toString(36)}`,
-      registeredAt: new Date().toISOString().split('T')[0],
-      loyalty: {
+      ...safeProfileData,
+      id: existing ? existing.id : `usr-${Date.now().toString(36)}`,
+      passwordHash: hashed,
+      registeredAt: existing?.registeredAt || new Date().toISOString().split('T')[0],
+      loyalty: existing?.loyalty || {
         stampsCount: 1, // 1 Porción de bienvenida de regalo
         totalStampsEarned: 1,
         completedCards: 0,
@@ -1081,12 +1189,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return updatedList;
     });
 
-    setDoc(doc(db, 'users', newUser.id), sanitizeForFirestore(newUser), { merge: true }).catch((err) => {
+    setDoc(doc(db, 'users', newUser.id), sanitizeForFirestore(newUser)).catch((err) => {
       handleFirestoreError(err, OperationType.CREATE, `users/${newUser.id}`, false);
     });
 
     showToast(`¡Cuenta creada con éxito! Bienvenido a Pizzería OZ, ${newUser.name}.`);
-    return newUser;
+    return { user: newUser };
   };
 
   const logout = () => {
@@ -1365,9 +1473,12 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
     // Auto-credit +1 loyalty portion stamp to user and consume reward if applied
     if (user) {
       if (isRewardRedeemActive) {
-        const currentUnclaimed = user.loyalty?.unclaimedRewards ?? 0;
+        const rawStamps = user.loyalty?.stampsCount ?? 0;
+        const hadLegacyEight = (user.loyalty?.unclaimedRewards ?? 0) === 0 && rawStamps >= 8;
+        const currentUnclaimed = user.loyalty?.unclaimedRewards ?? (rawStamps >= 8 ? 1 : 0);
         const newUnclaimed = Math.max(0, currentUnclaimed - 1);
-        adjustUserLoyalty(user.id, user.loyalty?.stampsCount ?? 0, newUnclaimed);
+        const resetStamps = hadLegacyEight ? 0 : rawStamps;
+        adjustUserLoyalty(user.id, resetStamps, newUnclaimed);
         setIsRewardRedeemActive(false);
       }
       addStampToUser(user.id, 1);
