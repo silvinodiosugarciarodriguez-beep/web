@@ -3,7 +3,6 @@ import {
   X,
   Package,
   User as UserIcon,
-  Settings,
   MessageCircle,
   Truck,
   Store,
@@ -11,14 +10,11 @@ import {
   ExternalLink,
   Receipt,
   Save,
-  Phone,
-  FileText,
   Sparkles,
-  Pizza,
-  Gift,
+  AlertCircle,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
-import { OrderStatus, Order } from '../types';
+import { Order } from '../types';
 import { LoyaltyCard } from './LoyaltyCard';
 
 export const UserDashboard: React.FC = () => {
@@ -27,31 +23,31 @@ export const UserDashboard: React.FC = () => {
     logout,
     userOrders,
     updateProfile,
-    updateOrderStatus,
     storeSettings,
-    updateStoreSettings,
     getWhatsAppUrl,
     isUserDashboardOpen,
     setIsUserDashboardOpen,
     dashboardInitialTab,
     setIsAuthModalOpen,
+    showToast,
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<'pedidos' | 'fidelizacion' | 'perfil' | 'configuracion'>(dashboardInitialTab);
+  const [activeTab, setActiveTab] = useState<'pedidos' | 'fidelizacion' | 'perfil'>(dashboardInitialTab);
   const [selectedOrderReceipt, setSelectedOrderReceipt] = useState<Order | null>(null);
 
   // Profile Edit State (including Cédula)
-  const [name, setName] = useState(user?.name || '');
+  const [name, setName] = useState(user?.name && !user.name.startsWith('Cliente CI ') && user.name !== 'Cliente OZ' ? user.name : '');
   const [cedula, setCedula] = useState(user?.cedula || '');
-  const [phone, setPhone] = useState(user?.phone || '');
-  const [address, setAddress] = useState(user?.address || '');
-  const [city, setCity] = useState(user?.city || '');
+  const [phone, setPhone] = useState(user?.phone && !user.phone.includes('5555-0000') ? user.phone : '');
+  const [address, setAddress] = useState(
+    user?.address && user.address !== 'Dirección por definir' && user.address !== 'Retiro en local'
+      ? user.address
+      : ''
+  );
+  const [city, setCity] = useState(
+    user?.city && user.city.trim().toLowerCase() !== 'buenos aires' ? user.city : 'Melo'
+  );
   const [apartment, setApartment] = useState(user?.apartment || '');
-
-  // Settings Edit State
-  const [merchantPhone, setMerchantPhone] = useState(storeSettings.whatsappNumber);
-  const [storeAddressInput, setStoreAddressInput] = useState(storeSettings.storeAddress);
-  const [storeHoursInput, setStoreHoursInput] = useState(storeSettings.storeHours);
 
   React.useEffect(() => {
     setActiveTab(dashboardInitialTab);
@@ -59,71 +55,44 @@ export const UserDashboard: React.FC = () => {
 
   React.useEffect(() => {
     if (user) {
-      setName(user.name);
-      setCedula(user.cedula);
-      setPhone(user.phone);
-      setAddress(user.address);
-      setCity(user.city);
+      setName(user.name && !user.name.startsWith('Cliente CI ') && user.name !== 'Cliente OZ' ? user.name : '');
+      setCedula(user.cedula || '');
+      setPhone(user.phone && !user.phone.includes('5555-0000') ? user.phone : '');
+      setAddress(
+        user.address && user.address !== 'Dirección por definir' && user.address !== 'Retiro en local'
+          ? user.address
+          : ''
+      );
+      setCity(
+        user.city && user.city.trim() && user.city.trim().toLowerCase() !== 'buenos aires'
+          ? user.city
+          : 'Melo'
+      );
       setApartment(user.apartment || '');
     }
   }, [user]);
 
   if (!isUserDashboardOpen) return null;
 
+  const isProfileIncomplete = Boolean(
+    user &&
+      (!name.trim() || !cedula.trim() || !phone.trim() || !address.trim() || !city.trim())
+  );
+
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    updateProfile({
-      name,
-      cedula,
-      phone,
-      address,
-      city,
-      apartment,
-    });
-  };
-
-  const handleSaveSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    updateStoreSettings({
-      whatsappNumber: merchantPhone.replace(/[^0-9]/g, ''),
-      storeAddress: storeAddressInput,
-      storeHours: storeHoursInput,
-    });
-  };
-
-  const getStatusBadge = (status: OrderStatus, method: 'delivery' | 'pickup') => {
-    switch (status) {
-      case 'recibido':
-        return (
-          <span className="text-amber-800 bg-amber-100 text-xs px-2.5 py-1 rounded-md font-medium">
-            Recibido / En cola
-          </span>
-        );
-      case 'preparando':
-        return (
-          <span className="text-blue-800 bg-blue-100 text-xs px-2.5 py-1 rounded-md font-medium">
-            Al horno / Preparando
-          </span>
-        );
-      case 'en_camino':
-        return (
-          <span className="text-purple-800 bg-purple-100 text-xs px-2.5 py-1 rounded-md font-medium">
-            {method === 'delivery' ? 'Repartidor en camino' : 'Listo para retirar en local'}
-          </span>
-        );
-      case 'listo_retiro':
-        return (
-          <span className="text-indigo-800 bg-indigo-100 text-xs px-2.5 py-1 rounded-md font-medium">
-            Listo en mostrador OZ
-          </span>
-        );
-      case 'entregado':
-        return (
-          <span className="text-emerald-800 bg-emerald-100 text-xs px-2.5 py-1 rounded-md font-medium">
-            Entregado / Disfrutado
-          </span>
-        );
+    if (!name.trim() || !cedula.trim() || !phone.trim() || !address.trim() || !city.trim()) {
+      showToast('Completá tu nombre, cédula, teléfono, dirección y barrio.');
+      return;
     }
+    updateProfile({
+      name: name.trim(),
+      cedula: cedula.trim(),
+      phone: phone.trim(),
+      address: address.trim(),
+      city: city.trim() || 'Melo',
+      apartment: apartment.trim(),
+    });
   };
 
   return (
@@ -221,18 +190,6 @@ export const UserDashboard: React.FC = () => {
             <span>Mis Datos & Cédula</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('configuracion')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
-              activeTab === 'configuracion'
-                ? 'border-stone-900 text-stone-900'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span>Configurar WhatsApp Pizzería OZ</span>
-          </button>
-
           {user && (
             <button
               onClick={() => {
@@ -305,7 +262,9 @@ export const UserDashboard: React.FC = () => {
                             <span className="font-mono font-bold text-stone-900 text-sm">
                               #{order.id}
                             </span>
-                            {getStatusBadge(order.status, order.deliveryMethod)}
+                            <span className="text-emerald-800 bg-emerald-100 text-xs px-2.5 py-1 rounded-md font-medium">
+                              Enviado
+                            </span>
                           </div>
                           <div className="text-[11px] text-stone-400 mt-0.5">
                             CI: <strong className="font-mono text-stone-600">{order.customerCedula}</strong> · Realizado el {new Date(order.createdAt).toLocaleDateString('es-AR', {
@@ -386,22 +345,7 @@ export const UserDashboard: React.FC = () => {
                       </div>
 
                       {/* Actions footer */}
-                      <div className="pt-3 border-t border-stone-100 flex flex-wrap items-center justify-between gap-2.5">
-                        {/* Simulation tool for status */}
-                        <div className="flex items-center gap-1.5 text-xs text-stone-500">
-                          <span>Simular estado:</span>
-                          <select
-                            value={order.status}
-                            onChange={(e) => updateOrderStatus(order.id, e.target.value as any)}
-                            className="bg-stone-100 border border-stone-200 text-stone-800 text-[11px] rounded px-2 py-1 font-medium focus:outline-none"
-                          >
-                            <option value="recibido">Recibido</option>
-                            <option value="preparando">Al horno</option>
-                            <option value="en_camino">En camino / Listo retiro</option>
-                            <option value="entregado">Entregado</option>
-                          </select>
-                        </div>
-
+                      <div className="pt-3 border-t border-stone-100 flex flex-wrap items-center justify-end gap-2.5">
                         {/* WhatsApp dispatch & receipt buttons */}
                         <div className="flex items-center gap-2">
                           <button
@@ -443,6 +387,18 @@ export const UserDashboard: React.FC = () => {
           {/* TAB 2: MIS DATOS & CÉDULA */}
           {activeTab === 'perfil' && (
             <div className="max-w-xl">
+              {isProfileIncomplete && (
+                <div className="mb-4 p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-950 flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="block">Completá tus datos para pedir más rápido</strong>
+                    <span>
+                      Necesitamos tu nombre completo, teléfono/WhatsApp, dirección y barrio para entregar o coordinar tus pedidos.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <p className="text-xs text-stone-500 mb-5">
                 Datos de contacto vinculados a tu Cédula de Identidad para agilizar tus pedidos de pizzas y empanadas.
               </p>
@@ -450,20 +406,21 @@ export const UserDashboard: React.FC = () => {
               <form onSubmit={handleSaveProfile} className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Nombre Completo
+                    Nombre y Apellido Completo *
                   </label>
                   <input
                     type="text"
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
+                    placeholder="Ej: Marcelo Silva"
                     className="w-full px-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Número de Cédula de Identidad (CI)
+                    Número de Cédula de Identidad (CI) *
                   </label>
                   <input
                     type="text"
@@ -476,26 +433,28 @@ export const UserDashboard: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Teléfono / WhatsApp de Contacto
+                    Teléfono / WhatsApp de Contacto *
                   </label>
                   <input
                     type="tel"
                     required
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
+                    placeholder="Ej: 099 123 456"
                     className="w-full px-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Dirección de Entrega Predeterminada
+                    Dirección de Entrega Predeterminada *
                   </label>
                   <input
                     type="text"
+                    required
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Calle y número"
+                    placeholder="Calle y número (ej: Aparicio Saravia 740)"
                     className="w-full px-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
@@ -503,26 +462,27 @@ export const UserDashboard: React.FC = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Piso / Departamento
+                      Piso / Departamento / Esquina
                     </label>
                     <input
                       type="text"
                       value={apartment}
                       onChange={(e) => setApartment(e.target.value)}
-                      placeholder="Ej: 4to B"
+                      placeholder="Ej: Casa esquina / Apto 2"
                       className="w-full px-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Barrio / Zona
+                      Barrio / Zona *
                     </label>
                     <input
                       type="text"
+                      required
                       value={city}
                       onChange={(e) => setCity(e.target.value)}
-                      placeholder="Ej: Centro"
+                      placeholder="Ej: Melo"
                       className="w-full px-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                     />
                   </div>
@@ -531,80 +491,10 @@ export const UserDashboard: React.FC = () => {
                 <div className="pt-3">
                   <button
                     type="submit"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-semibold transition-colors"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
                   >
                     <Save className="w-4 h-4 text-amber-300" />
                     <span>Guardar Cambios de Perfil</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* TAB 3: CONFIGURACIÓN TIENDA (WHATSAPP RECEPTOR) */}
-          {activeTab === 'configuracion' && (
-            <div className="max-w-xl">
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl mb-5 text-xs text-emerald-950 space-y-1">
-                <div className="font-bold flex items-center gap-1.5">
-                  <MessageCircle className="w-4 h-4 text-emerald-700" />
-                  <span>Configuración para el dueño de Pizzería OZ ("oz")</span>
-                </div>
-                <p>
-                  Podés configurar el número de WhatsApp receptor para que los pedidos de los clientes lleguen a tu propio teléfono.
-                </p>
-              </div>
-
-              <form onSubmit={handleSaveSettings} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Número de WhatsApp Receptor (código de país sin '+')
-                  </label>
-                  <div className="relative">
-                    <Phone className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      required
-                      value={merchantPhone}
-                      onChange={(e) => setMerchantPhone(e.target.value)}
-                      placeholder="Ej: 5491158492011 o 59899123456"
-                      className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Dirección del Local
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={storeAddressInput}
-                    onChange={(e) => setStoreAddressInput(e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Horarios de Atención
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={storeHoursInput}
-                    onChange={(e) => setStoreHoursInput(e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                </div>
-
-                <div className="pt-3">
-                  <button
-                    type="submit"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold transition-colors"
-                  >
-                    <Save className="w-4 h-4" />
-                    <span>Guardar Datos de Pizzería OZ</span>
                   </button>
                 </div>
               </form>
