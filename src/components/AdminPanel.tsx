@@ -28,8 +28,9 @@ import {
   Sparkles,
   Cloud,
   RefreshCw,
+  Clock,
 } from 'lucide-react';
-import { useStore } from '../context/StoreContext';
+import { useStore, evaluateStoreOpen, formatScheduleHoursText, extractTimeRangeFromText, StoreStatusMode } from '../context/StoreContext';
 import { Product, ProductCategory, OrderStatus } from '../types';
 import { STORE_CATEGORIES } from '../data/products';
 
@@ -116,6 +117,8 @@ export const AdminPanel: React.FC = () => {
     syncLocalCatalogToCloud,
     storeSettings,
     updateStoreSettings,
+    isStoreCurrentlyOpen,
+    storeStatusReason,
     orders,
     updateOrderStatus,
     showToast,
@@ -123,6 +126,8 @@ export const AdminPanel: React.FC = () => {
     allRegisteredUsers,
     addStampToUser,
     adjustUserLoyalty,
+    adminResetUserPassword,
+    deleteUser,
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<'productos' | 'textos' | 'logo' | 'pedidos' | 'fidelizacion'>('productos');
@@ -166,6 +171,12 @@ export const AdminPanel: React.FC = () => {
     heroHeadline: storeSettings.heroHeadline,
     heroSubtitle: storeSettings.heroSubtitle,
     logoUrl: storeSettings.logoUrl,
+    isStoreOpen: storeSettings.isStoreOpen !== false,
+    closedMessage: storeSettings.closedMessage || '',
+    statusMode: (storeSettings.statusMode || 'auto') as StoreStatusMode,
+    autoOpenTime: storeSettings.autoOpenTime || '19:30',
+    autoCloseTime: storeSettings.autoCloseTime || '00:30',
+    autoOpenDays: Array.isArray(storeSettings.autoOpenDays) ? storeSettings.autoOpenDays : [0, 2, 3, 4, 5, 6],
   });
 
   useEffect(() => {
@@ -180,12 +191,23 @@ export const AdminPanel: React.FC = () => {
       heroHeadline: storeSettings.heroHeadline,
       heroSubtitle: storeSettings.heroSubtitle,
       logoUrl: storeSettings.logoUrl,
+      isStoreOpen: storeSettings.isStoreOpen !== false,
+      closedMessage: storeSettings.closedMessage || '',
+      statusMode: (storeSettings.statusMode || 'auto') as StoreStatusMode,
+      autoOpenTime: storeSettings.autoOpenTime || '19:30',
+      autoCloseTime: storeSettings.autoCloseTime || '00:30',
+      autoOpenDays: Array.isArray(storeSettings.autoOpenDays) ? storeSettings.autoOpenDays : [0, 2, 3, 4, 5, 6],
     });
   }, [storeSettings]);
 
   // Quick inline price editing
   const [quickPriceId, setQuickPriceId] = useState<string | null>(null);
   const [quickPriceValue, setQuickPriceValue] = useState<number>(0);
+
+  // Admin inline client password reset & delete confirmation
+  const [resetPassUserId, setResetPassUserId] = useState<string | null>(null);
+  const [resetPassValue, setResetPassValue] = useState<string>('');
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
 
   // Quick Photo Change Modal
   const [photoModalProduct, setPhotoModalProduct] = useState<Product | null>(null);
@@ -232,10 +254,26 @@ export const AdminPanel: React.FC = () => {
 
   const handleSaveTexts = (e: React.FormEvent) => {
     e.preventDefault();
+    let finalOpenTime = textsForm.autoOpenTime;
+    let finalCloseTime = textsForm.autoCloseTime;
+    if (
+      textsForm.storeHours !== storeSettings.storeHours &&
+      textsForm.autoOpenTime === storeSettings.autoOpenTime &&
+      textsForm.autoCloseTime === storeSettings.autoCloseTime
+    ) {
+      const parsed = extractTimeRangeFromText(textsForm.storeHours);
+      if (parsed) {
+        finalOpenTime = parsed.openTime;
+        finalCloseTime = parsed.closeTime;
+      }
+    }
     updateStoreSettings({
       ...textsForm,
+      autoOpenTime: finalOpenTime,
+      autoCloseTime: finalCloseTime,
       shippingFee: Number(textsForm.shippingFee) || 0,
       freeShippingThreshold: Number(textsForm.freeShippingThreshold) || 0,
+      isStoreOpen: textsForm.statusMode !== 'manual_closed',
     });
   };
 
@@ -431,6 +469,65 @@ export const AdminPanel: React.FC = () => {
           </div>
         ) : (
           <>
+            {/* Store Open / Closed Quick Bar with Automatic Schedule */}
+            <div className="px-4 sm:px-6 py-2.5 border-b border-stone-800 bg-stone-950/75 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 text-xs min-w-0">
+                <span
+                  className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${
+                    isStoreCurrentlyOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
+                  }`}
+                />
+                <span className="font-semibold text-stone-200 truncate">
+                  {isStoreCurrentlyOpen
+                    ? 'Local Abierto · Recibiendo pedidos'
+                    : 'Local Cerrado · Pedidos pausados'}
+                </span>
+                <span className="text-[11px] px-2 py-0.5 rounded-md bg-stone-800 border border-stone-700 text-amber-300 font-mono shrink-0">
+                  {storeSettings.statusMode === 'auto'
+                    ? `⏰ Auto (${storeSettings.autoOpenTime}–${storeSettings.autoCloseTime})`
+                    : storeStatusReason === 'manual_open'
+                    ? 'Manual: Abierto'
+                    : 'Manual: Cerrado'}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => updateStoreSettings({ statusMode: 'auto', isStoreOpen: true })}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    storeSettings.statusMode === 'auto'
+                      ? 'bg-amber-500 text-stone-950 border-amber-400 shadow-xs'
+                      : 'bg-stone-900 hover:bg-stone-800 border-stone-700 text-stone-300'
+                  }`}
+                  title="Seguir el horario automático de apertura y cierre"
+                >
+                  ⏰ Automático
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateStoreSettings({ statusMode: 'manual_open', isStoreOpen: true })}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    storeSettings.statusMode === 'manual_open'
+                      ? 'bg-emerald-600 text-white border-emerald-400 shadow-xs'
+                      : 'bg-stone-900 hover:bg-emerald-950/60 border-stone-700 text-emerald-300'
+                  }`}
+                >
+                  🟢 Abrir ahora
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateStoreSettings({ statusMode: 'manual_closed', isStoreOpen: false })}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    storeSettings.statusMode === 'manual_closed'
+                      ? 'bg-rose-600 text-white border-rose-400 shadow-xs'
+                      : 'bg-stone-900 hover:bg-rose-950/70 border-stone-700 text-rose-300'
+                  }`}
+                >
+                  🔴 Cerrar ahora
+                </button>
+              </div>
+            </div>
+
             {/* Nav Tabs */}
             <div className="flex items-center gap-1 px-4 sm:px-6 pt-3 border-b border-stone-800 bg-stone-950/40 shrink-0 overflow-x-auto">
               <button
@@ -582,6 +679,7 @@ export const AdminPanel: React.FC = () => {
                             <th className="py-3 px-4">Producto</th>
                             <th className="py-3 px-4">Categoría</th>
                             <th className="py-3 px-4">Precio Actual ($)</th>
+                            <th className="py-3 px-4">Estado hoy</th>
                             <th className="py-3 px-4">Sabores Extra</th>
                             <th className="py-3 px-4 text-right">Acciones</th>
                           </tr>
@@ -589,8 +687,9 @@ export const AdminPanel: React.FC = () => {
                         <tbody className="divide-y divide-stone-800/60 text-stone-300">
                           {filteredProducts.map((p) => {
                             const isEditingPrice = quickPriceId === p.id;
+                            const isAvailable = p.available !== false;
                             return (
-                              <tr key={p.id} className="hover:bg-stone-900/40 transition-colors">
+                              <tr key={p.id} className={`hover:bg-stone-900/40 transition-colors ${!isAvailable ? 'opacity-65' : ''}`}>
                                 <td className="py-2.5 px-4">
                                   <div className="flex items-center gap-3">
                                     <img
@@ -661,6 +760,21 @@ export const AdminPanel: React.FC = () => {
                                       </button>
                                     </div>
                                   )}
+                                </td>
+
+                                <td className="py-2.5 px-4 whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => updateProduct({ ...p, available: !isAvailable })}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                                      isAvailable
+                                        ? 'bg-emerald-950/60 hover:bg-emerald-900/80 border-emerald-500/40 text-emerald-300'
+                                        : 'bg-rose-950/70 hover:bg-rose-900/80 border-rose-500/50 text-rose-300'
+                                    }`}
+                                    title="Pausar o reactivar producto sin borrarlo"
+                                  >
+                                    {isAvailable ? '✓ Disponible' : '✕ Agotado hoy'}
+                                  </button>
                                 </td>
 
                                 <td className="py-2.5 px-4 whitespace-nowrap">
@@ -758,16 +872,218 @@ export const AdminPanel: React.FC = () => {
                       </div>
 
                       <div className="sm:col-span-2">
-                        <label className="block text-xs font-semibold text-stone-300 mb-1">
-                          Días y Horarios de Atención
-                        </label>
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                          <label className="block text-xs font-semibold text-stone-300">
+                            Texto de Días y Horarios (visible en la web)
+                          </label>
+                          {textsForm.storeHours !==
+                            formatScheduleHoursText(textsForm.autoOpenTime, textsForm.autoCloseTime, textsForm.autoOpenDays) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTextsForm({
+                                  ...textsForm,
+                                  storeHours: formatScheduleHoursText(
+                                    textsForm.autoOpenTime,
+                                    textsForm.autoCloseTime,
+                                    textsForm.autoOpenDays
+                                  ),
+                                })
+                              }
+                              className="text-[11px] text-amber-400 hover:text-amber-300 underline cursor-pointer"
+                            >
+                              Sincronizar con {textsForm.autoOpenTime} a {textsForm.autoCloseTime} hs
+                            </button>
+                          )}
+                        </div>
                         <input
                           type="text"
                           value={textsForm.storeHours}
                           onChange={(e) => setTextsForm({ ...textsForm, storeHours: e.target.value })}
+                          onBlur={() => {
+                            const parsed = extractTimeRangeFromText(textsForm.storeHours);
+                            if (parsed) {
+                              setTextsForm((prev) => ({
+                                ...prev,
+                                autoOpenTime: parsed.openTime,
+                                autoCloseTime: parsed.closeTime,
+                              }));
+                            }
+                          }}
                           className="w-full px-3 py-2 bg-stone-900 border border-stone-800 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500"
                           required
                         />
+                        <span className="text-[10px] text-stone-400 mt-1 block">
+                          Se actualiza automáticamente al cambiar la hora de apertura, cierre o los días abajo.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Horario Automático de Apertura y Cierre */}
+                  <div className="bg-stone-950/60 border border-stone-800 rounded-xl p-5 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+                        <Clock className="w-4 h-4" />
+                        <span>Apertura y Cierre Automático</span>
+                      </h3>
+                      <span
+                        className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                          evaluateStoreOpen({ ...storeSettings, ...textsForm }).isOpen
+                            ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-300'
+                            : 'bg-rose-950/70 border-rose-500/40 text-rose-300'
+                        }`}
+                      >
+                        {evaluateStoreOpen({ ...storeSettings, ...textsForm }).isOpen
+                          ? '🟢 Abierto ahora con este ajuste'
+                          : '🔴 Cerrado ahora con este ajuste'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {(
+                        [
+                          { id: 'auto', label: '⏰ Automático por horario' },
+                          { id: 'manual_open', label: '🟢 Siempre Abierto (Manual)' },
+                          { id: 'manual_closed', label: '🔴 Cerrado / Pausado (Manual)' },
+                        ] as const
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setTextsForm({ ...textsForm, statusMode: opt.id })}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            textsForm.statusMode === opt.id
+                              ? 'bg-amber-500 text-stone-950 border-amber-400'
+                              : 'bg-stone-900 text-stone-300 border-stone-800 hover:border-stone-700'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-stone-300 mb-1">
+                          Hora de Apertura automática
+                        </label>
+                        <input
+                          type="time"
+                          value={textsForm.autoOpenTime}
+                          onChange={(e) => {
+                            const nextOpen = e.target.value;
+                            const oldAuto = formatScheduleHoursText(
+                              textsForm.autoOpenTime,
+                              textsForm.autoCloseTime,
+                              textsForm.autoOpenDays
+                            );
+                            const shouldSync =
+                              !textsForm.storeHours.trim() ||
+                              textsForm.storeHours.trim() === oldAuto ||
+                              textsForm.storeHours.trim() === 'Martes a Domingo de 19:30 a 00:30 hs';
+                            setTextsForm({
+                              ...textsForm,
+                              autoOpenTime: nextOpen,
+                              storeHours: shouldSync
+                                ? formatScheduleHoursText(nextOpen, textsForm.autoCloseTime, textsForm.autoOpenDays)
+                                : textsForm.storeHours,
+                            });
+                          }}
+                          className="w-full px-3 py-2 bg-stone-900 border border-stone-800 rounded-xl text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-stone-300 mb-1">
+                          Hora de Cierre automático
+                        </label>
+                        <input
+                          type="time"
+                          value={textsForm.autoCloseTime}
+                          onChange={(e) => {
+                            const nextClose = e.target.value;
+                            const oldAuto = formatScheduleHoursText(
+                              textsForm.autoOpenTime,
+                              textsForm.autoCloseTime,
+                              textsForm.autoOpenDays
+                            );
+                            const shouldSync =
+                              !textsForm.storeHours.trim() ||
+                              textsForm.storeHours.trim() === oldAuto ||
+                              textsForm.storeHours.trim() === 'Martes a Domingo de 19:30 a 00:30 hs';
+                            setTextsForm({
+                              ...textsForm,
+                              autoCloseTime: nextClose,
+                              storeHours: shouldSync
+                                ? formatScheduleHoursText(textsForm.autoOpenTime, nextClose, textsForm.autoOpenDays)
+                                : textsForm.storeHours,
+                            });
+                          }}
+                          className="w-full px-3 py-2 bg-stone-900 border border-stone-800 rounded-xl text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                          required
+                        />
+                        <span className="text-[10px] text-stone-400 mt-1 block">
+                          Si cierra después de medianoche (ej: 00:30), se mantiene abierto hasta esa hora.
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-300 mb-2">
+                        Días que abre el local
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { day: 1, label: 'Lun' },
+                          { day: 2, label: 'Mar' },
+                          { day: 3, label: 'Mié' },
+                          { day: 4, label: 'Jue' },
+                          { day: 5, label: 'Vie' },
+                          { day: 6, label: 'Sáb' },
+                          { day: 0, label: 'Dom' },
+                        ].map((d) => {
+                          const isSelected = textsForm.autoOpenDays.includes(d.day);
+                          return (
+                            <button
+                              key={d.day}
+                              type="button"
+                              onClick={() => {
+                                const next = isSelected
+                                  ? textsForm.autoOpenDays.filter((x) => x !== d.day)
+                                  : [...textsForm.autoOpenDays, d.day];
+                                if (next.length === 0) {
+                                  showToast('Dejá al menos 1 día seleccionado (o usá Cerrado Manual).');
+                                  return;
+                                }
+                                const oldAuto = formatScheduleHoursText(
+                                  textsForm.autoOpenTime,
+                                  textsForm.autoCloseTime,
+                                  textsForm.autoOpenDays
+                                );
+                                const shouldSync =
+                                  !textsForm.storeHours.trim() ||
+                                  textsForm.storeHours.trim() === oldAuto ||
+                                  textsForm.storeHours.trim() === 'Martes a Domingo de 19:30 a 00:30 hs';
+                                setTextsForm({
+                                  ...textsForm,
+                                  autoOpenDays: next,
+                                  storeHours: shouldSync
+                                    ? formatScheduleHoursText(textsForm.autoOpenTime, textsForm.autoCloseTime, next)
+                                    : textsForm.storeHours,
+                                });
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white border-emerald-400'
+                                  : 'bg-stone-900 text-stone-400 border-stone-800 hover:text-stone-200'
+                              }`}
+                            >
+                              {d.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -847,6 +1163,19 @@ export const AdminPanel: React.FC = () => {
                           rows={3}
                           value={textsForm.heroSubtitle}
                           onChange={(e) => setTextsForm({ ...textsForm, heroSubtitle: e.target.value })}
+                          className="w-full px-3 py-2 bg-stone-900 border border-stone-800 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-stone-300 mb-1">
+                          Aviso cuando el local está cerrado / pedidos pausados
+                        </label>
+                        <input
+                          type="text"
+                          value={textsForm.closedMessage}
+                          onChange={(e) => setTextsForm({ ...textsForm, closedMessage: e.target.value })}
+                          placeholder={`Ej: Cocina cerrada por hoy. Volvemos a las ${textsForm.autoOpenTime || '20:00'} hs.`}
                           className="w-full px-3 py-2 bg-stone-900 border border-stone-800 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500"
                         />
                       </div>
@@ -1163,133 +1492,311 @@ export const AdminPanel: React.FC = () => {
                   </div>
 
                   {/* Clients List */}
-                  <div className="space-y-3">
-                    {allRegisteredUsers
-                      .filter((u) => {
-                        if (!clientSearchQuery.trim()) return true;
-                        const q = clientSearchQuery.toLowerCase();
-                        return (
-                          u.name.toLowerCase().includes(q) ||
-                          u.cedula.toLowerCase().includes(q) ||
-                          (u.loyalty?.cardNumber || '').toLowerCase().includes(q) ||
-                          (u.phone || '').includes(q)
-                        );
-                      })
-                      .map((client) => {
-                        const cleanCedula = client.cedula.replace(/[^0-9]/g, '').slice(-8).padStart(8, '0');
-                        const cardNum = client.loyalty?.cardNumber || `OZ-${cleanCedula.slice(0, 4)}-${cleanCedula.slice(4)}`;
-                        const stamps = client.loyalty?.stampsCount ?? 0;
-                        const unclaimed = client.loyalty?.unclaimedRewards ?? (stamps >= 8 ? 1 : 0);
-                        const tier = client.loyalty?.tier || (stamps >= 8 ? 'explorador' : 'amigo');
-                        const tierLabel = tier === 'maestro_vip' ? '🥇 Maestro VIP' : tier === 'explorador' ? '🥈 Explorador' : '🥉 Amigo OZ';
+                  {(() => {
+                    const cedulaCounts = new Map<string, number>();
+                    allRegisteredUsers.forEach((u) => {
+                      const digits = String(u.cedula || '').replace(/[^0-9]/g, '');
+                      if (digits) {
+                        cedulaCounts.set(digits, (cedulaCounts.get(digits) || 0) + 1);
+                      }
+                    });
+                    const hasDuplicateCedulas = Array.from(cedulaCounts.values()).some((count) => count > 1);
 
-                        return (
-                          <div
-                            key={client.id}
-                            className="p-4 sm:p-5 rounded-2xl bg-stone-950/80 border border-stone-800 hover:border-amber-500/40 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
-                          >
-                            {/* Client Identification */}
-                            <div className="flex items-start gap-3 min-w-[240px]">
-                              <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
-                                <Users className="w-5 h-5" />
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <h4 className="font-bold text-white text-sm">{client.name}</h4>
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-800 border border-stone-700 text-stone-300 font-semibold">
-                                    {tierLabel}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2 text-xs text-stone-400 mt-0.5 font-mono">
-                                  <span>CI: {client.cedula}</span>
-                                  <span>·</span>
-                                  <span>{client.phone}</span>
-                                </div>
-                                <div className="text-[11px] text-amber-300/80 font-mono mt-0.5">
-                                  Tarjeta: <strong>{cardNum}</strong>
-                                </div>
-                              </div>
-                            </div>
+                    return (
+                      <div className="space-y-3">
+                        {hasDuplicateCedulas && (
+                          <div className="p-3.5 rounded-xl bg-amber-950/35 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2.5">
+                            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                            <span>
+                              Se detectaron cuentas repetidas con la misma Cédula. Podés ver cuáles tienen <strong>Con clave</strong>, sus porciones y fecha, y usar <strong>Eliminar</strong> para borrar las copias que no necesites.
+                            </span>
+                          </div>
+                        )}
 
-                            {/* Pizza Slices Status */}
-                            <div className="flex flex-col items-start md:items-center gap-1.5">
-                              <div className="flex items-center gap-1">
-                                {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => {
-                                  const filled = s <= (stamps % 8 || (stamps >= 8 ? 8 : 0));
-                                  return (
-                                    <div
-                                      key={s}
-                                      className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold ${
-                                        filled
-                                          ? 'bg-amber-500 text-stone-950 ring-1 ring-amber-300 shadow-xs'
-                                          : 'bg-stone-900 border border-stone-800 text-stone-600'
-                                      }`}
-                                      title={`Porción ${s}`}
-                                    >
-                                      {filled ? '🍕' : s}
+                        {allRegisteredUsers
+                          .filter((u) => {
+                            if (!clientSearchQuery.trim()) return true;
+                            const q = clientSearchQuery.toLowerCase();
+                            return (
+                              u.name.toLowerCase().includes(q) ||
+                              u.cedula.toLowerCase().includes(q) ||
+                              (u.loyalty?.cardNumber || '').toLowerCase().includes(q) ||
+                              (u.phone || '').includes(q)
+                            );
+                          })
+                          .map((client) => {
+                            const digitsOnly = String(client.cedula || '').replace(/[^0-9]/g, '');
+                            const duplicateCount = digitsOnly ? cedulaCounts.get(digitsOnly) || 0 : 0;
+                            const cleanCedula = digitsOnly.slice(-8).padStart(8, '0');
+                            const cardNum = client.loyalty?.cardNumber || `OZ-${cleanCedula.slice(0, 4)}-${cleanCedula.slice(4)}`;
+                            const stamps = client.loyalty?.stampsCount ?? 0;
+                            const unclaimed = client.loyalty?.unclaimedRewards ?? (stamps >= 8 ? 1 : 0);
+                            const tier = client.loyalty?.tier || (stamps >= 8 ? 'explorador' : 'amigo');
+                            const tierLabel = tier === 'maestro_vip' ? '🥇 Maestro VIP' : tier === 'explorador' ? '🥈 Explorador' : '🥉 Amigo OZ';
+                            const hasPassword = Boolean(client.passwordHash || client.password);
+
+                            return (
+                              <div
+                                key={client.id}
+                                className={`p-4 sm:p-5 rounded-2xl bg-stone-950/80 border transition-all flex flex-col gap-3 ${
+                                  duplicateCount > 1
+                                    ? 'border-amber-500/40 hover:border-amber-400/70'
+                                    : 'border-stone-800 hover:border-amber-500/40'
+                                }`}
+                              >
+                                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+                                  {/* Client Identification */}
+                                  <div className="flex items-start gap-3 min-w-[240px]">
+                                    <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+                                      <Users className="w-5 h-5" />
                                     </div>
-                                  );
-                                })}
-                              </div>
-                              <div className="text-[11px] text-stone-400">
-                                <strong className="text-amber-400">{stamps % 8}/8</strong> porciones de la tarjeta
-                                {unclaimed > 0 && (
-                                  <span className="ml-2 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                                    🎁 {unclaimed} Pizza(s) Gratis
-                                  </span>
+                                    <div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <h4 className="font-bold text-white text-sm">{client.name}</h4>
+                                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-800 border border-stone-700 text-stone-300 font-semibold">
+                                          {tierLabel}
+                                        </span>
+                                        {client.id !== 'usr-demo-pizzeria' && (
+                                          <span
+                                            className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${
+                                              hasPassword
+                                                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                                                : 'bg-amber-950/60 border-amber-500/40 text-amber-300'
+                                            }`}
+                                          >
+                                            {hasPassword ? '🔒 Con clave' : '⚠️ Sin clave'}
+                                          </span>
+                                        )}
+                                        {duplicateCount > 1 && (
+                                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold">
+                                            Cédula duplicada (x{duplicateCount})
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2 text-xs text-stone-400 mt-0.5 font-mono">
+                                        <span>CI: {client.cedula}</span>
+                                        <span>·</span>
+                                        <span>{client.phone}</span>
+                                        {client.registeredAt && (
+                                          <>
+                                            <span>·</span>
+                                            <span>Alta: {client.registeredAt}</span>
+                                          </>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-amber-300/80 font-mono mt-0.5">
+                                        Tarjeta: <strong>{cardNum}</strong>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Pizza Slices Status */}
+                                  <div className="flex flex-col items-start lg:items-center gap-1.5">
+                                    <div className="flex items-center gap-1">
+                                      {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => {
+                                        const filled = s <= (stamps % 8 || (stamps >= 8 ? 8 : 0));
+                                        return (
+                                          <div
+                                            key={s}
+                                            className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold ${
+                                              filled
+                                                ? 'bg-amber-500 text-stone-950 ring-1 ring-amber-300 shadow-xs'
+                                                : 'bg-stone-900 border border-stone-800 text-stone-600'
+                                            }`}
+                                            title={`Porción ${s}`}
+                                          >
+                                            {filled ? '🍕' : s}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    <div className="text-[11px] text-stone-400">
+                                      <strong className="text-amber-400">{stamps % 8}/8</strong> porciones de la tarjeta
+                                      {unclaimed > 0 && (
+                                        <span className="ml-2 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                                          🎁 {unclaimed} Pizza(s) Gratis
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Control Buttons for Admin */}
+                                  <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 self-end lg:self-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => adjustUserLoyalty(client.id, Math.max(0, stamps - 1), unclaimed)}
+                                      disabled={stamps <= 0}
+                                      className="px-2.5 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-800 text-stone-300 text-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                                      title="Quitar 1 porción"
+                                    >
+                                      -1
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => addStampToUser(client.id, 1)}
+                                      className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1"
+                                      title="Acreditar 1 porción por pedido realizado"
+                                    >
+                                      <span>+1 Porción</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => adjustUserLoyalty(client.id, stamps, unclaimed + 1)}
+                                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1"
+                                      title="Otorgar premio de Pizzeta Muzzarella o Fainá gratis"
+                                    >
+                                      <Gift className="w-3.5 h-3.5" />
+                                      <span>+1 Premio</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const nextStamps = (client.loyalty?.unclaimedRewards ?? 0) === 0 && stamps >= 8 ? 0 : stamps;
+                                        adjustUserLoyalty(client.id, nextStamps, Math.max(0, unclaimed - 1));
+                                      }}
+                                      disabled={unclaimed <= 0}
+                                      className="px-3 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900 border border-rose-500/40 text-rose-200 text-xs font-bold transition-all shadow-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
+                                      title="Marcar 1 premio como entregado / canjeado en el local"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>Canjear / -1 Premio</span>
+                                    </button>
+
+                                    {client.id !== 'usr-demo-pizzeria' && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setConfirmDeleteUserId(null);
+                                            if (resetPassUserId === client.id) {
+                                              setResetPassUserId(null);
+                                              setResetPassValue('');
+                                            } else {
+                                              setResetPassUserId(client.id);
+                                              setResetPassValue('');
+                                            }
+                                          }}
+                                          className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${
+                                            resetPassUserId === client.id
+                                              ? 'bg-amber-500 text-stone-950 border-amber-400'
+                                              : 'bg-stone-800 hover:bg-stone-700 border-stone-700 text-amber-300'
+                                          }`}
+                                          title="Asignar o cambiar la contraseña del cliente"
+                                        >
+                                          <Lock className="w-3.5 h-3.5" />
+                                          <span>Clave</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setResetPassUserId(null);
+                                            setResetPassValue('');
+                                            setConfirmDeleteUserId((prev) => (prev === client.id ? null : client.id));
+                                          }}
+                                          className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${
+                                            confirmDeleteUserId === client.id
+                                              ? 'bg-rose-600 text-white border-rose-500'
+                                              : 'bg-rose-950/50 hover:bg-rose-900/70 border-rose-500/40 text-rose-300'
+                                          }`}
+                                          title="Eliminar este usuario"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                          <span>Eliminar</span>
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {resetPassUserId === client.id && (
+                                  <form
+                                    onSubmit={(e) => {
+                                      e.preventDefault();
+                                      const res = adminResetUserPassword(client.id, resetPassValue);
+                                      if (res.ok) {
+                                        setResetPassUserId(null);
+                                        setResetPassValue('');
+                                      } else {
+                                        showToast(res.error || 'No se pudo cambiar la clave.');
+                                      }
+                                    }}
+                                    className="w-full pt-3 border-t border-stone-800 flex flex-wrap items-center gap-2"
+                                  >
+                                    <span className="text-xs text-amber-300 font-semibold flex items-center gap-1 mr-1">
+                                      <Lock className="w-3.5 h-3.5" />
+                                      Nueva clave para {client.name || client.cedula}:
+                                    </span>
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      value={resetPassValue}
+                                      onChange={(e) => setResetPassValue(e.target.value)}
+                                      placeholder="Escribí la nueva contraseña (mín. 4 caracteres)"
+                                      className="flex-1 min-w-[200px] px-3 py-1.5 bg-stone-900 border border-amber-500/60 rounded-lg text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-400"
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold cursor-pointer"
+                                    >
+                                      Guardar Clave
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setResetPassUserId(null);
+                                        setResetPassValue('');
+                                      }}
+                                      className="px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs cursor-pointer"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </form>
+                                )}
+
+                                {confirmDeleteUserId === client.id && (
+                                  <div className="w-full pt-3 border-t border-rose-500/30 bg-rose-950/20 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+                                    <div className="text-xs text-rose-200 flex items-center gap-2">
+                                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                                      <span>
+                                        ¿Eliminar definitivamente a <strong>{client.name}</strong> (CI: {client.cedula}, {stamps % 8}/8 porciones)? Esta acción no se puede deshacer.
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 ml-auto">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const res = deleteUser(client.id);
+                                          if (res.ok) {
+                                            setConfirmDeleteUserId(null);
+                                          } else {
+                                            showToast(res.error || 'No se pudo eliminar el usuario.');
+                                          }
+                                        }}
+                                        className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer flex items-center gap-1"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <span>Confirmar Eliminar</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteUserId(null)}
+                                        className="px-2.5 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs cursor-pointer"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  </div>
                                 )}
                               </div>
-                            </div>
-
-                            {/* Control Buttons for Admin */}
-                            <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 self-end md:self-center">
-                              <button
-                                type="button"
-                                onClick={() => adjustUserLoyalty(client.id, Math.max(0, stamps - 1), unclaimed)}
-                                disabled={stamps <= 0}
-                                className="px-2.5 py-1.5 rounded-lg bg-stone-900 hover:bg-stone-800 border border-stone-800 text-stone-300 text-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                                title="Quitar 1 porción"
-                              >
-                                -1
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => addStampToUser(client.id, 1)}
-                                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1"
-                                title="Acreditar 1 porción por pedido realizado"
-                              >
-                                <span>+1 Porción</span>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => adjustUserLoyalty(client.id, stamps, unclaimed + 1)}
-                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1"
-                                title="Otorgar premio de Pizzeta Muzzarella o Fainá gratis"
-                              >
-                                <Gift className="w-3.5 h-3.5" />
-                                <span>+1 Premio</span>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const nextStamps = (client.loyalty?.unclaimedRewards ?? 0) === 0 && stamps >= 8 ? 0 : stamps;
-                                  adjustUserLoyalty(client.id, nextStamps, Math.max(0, unclaimed - 1));
-                                }}
-                                disabled={unclaimed <= 0}
-                                className="px-3 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900 border border-rose-500/40 text-rose-200 text-xs font-bold transition-all shadow-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1"
-                                title="Marcar 1 premio como entregado / canjeado en el local"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                                <span>Canjear / -1 Premio</span>
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
+                            );
+                          })}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
