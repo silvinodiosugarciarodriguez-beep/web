@@ -26,6 +26,7 @@ export const CheckoutModal: React.FC = () => {
     storeSettings,
     user,
     createOrder,
+    updateProfile,
     isCheckoutModalOpen,
     setIsCheckoutModalOpen,
     getWhatsAppUrl,
@@ -46,7 +47,7 @@ export const CheckoutModal: React.FC = () => {
   // Delivery fields
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [apartment, setApartment] = useState('');
-  const [deliveryCity, setDeliveryCity] = useState('Buenos Aires');
+  const [deliveryCity, setDeliveryCity] = useState('Melo');
   const [customerNotes, setCustomerNotes] = useState('');
 
   // Cash payment fields
@@ -66,13 +67,23 @@ export const CheckoutModal: React.FC = () => {
   // Prefill with user profile if available
   useEffect(() => {
     if (user) {
-      setCustomerName(user.name || '');
+      setCustomerName(
+        user.name && !user.name.startsWith('Cliente CI ') && user.name !== 'Cliente OZ' ? user.name : ''
+      );
       setCustomerCedula(user.cedula || '');
-      setCustomerPhone(user.phone || '');
+      setCustomerPhone(user.phone && !user.phone.includes('5555-0000') ? user.phone : '');
       setCustomerEmail(user.email || '');
-      setDeliveryAddress(user.address || '');
+      setDeliveryAddress(
+        user.address && user.address !== 'Dirección por definir' && user.address !== 'Retiro en local'
+          ? user.address
+          : ''
+      );
       setApartment(user.apartment || '');
-      if (user.city) setDeliveryCity(user.city);
+      if (user.city && user.city.trim() && user.city.trim().toLowerCase() !== 'buenos aires') {
+        setDeliveryCity(user.city);
+      } else {
+        setDeliveryCity('Melo');
+      }
     }
   }, [user, isCheckoutModalOpen]);
 
@@ -160,6 +171,10 @@ export const CheckoutModal: React.FC = () => {
       setFormError('Por favor ingresá la dirección de entrega para el delivery.');
       return;
     }
+    if (isDelivery && !deliveryCity.trim()) {
+      setFormError('Por favor ingresá el barrio o zona de entrega.');
+      return;
+    }
     if (paymentMethod === 'card') {
       if (cardNumber.replace(/\s/g, '').length < 13) {
         setFormError('Por favor ingresá un número de tarjeta válido (16 dígitos).');
@@ -174,6 +189,27 @@ export const CheckoutModal: React.FC = () => {
     setIsSubmitting(true);
 
     try {
+      // Save any newly completed contact/address fields back to the user profile
+      const profileUpdates: Record<string, string> = {};
+      if (!user.name?.trim() || user.name.startsWith('Cliente CI ') || user.name === 'Cliente OZ') {
+        profileUpdates.name = customerName.trim();
+      }
+      if (!user.phone?.trim() || user.phone.includes('5555-0000')) {
+        profileUpdates.phone = customerPhone.trim();
+      }
+      if (
+        isDelivery &&
+        (!user.address?.trim() || user.address === 'Dirección por definir' || user.address === 'Retiro en local')
+      ) {
+        profileUpdates.address = deliveryAddress.trim();
+      }
+      if (isDelivery && (!user.city?.trim() || user.city.toLowerCase() === 'buenos aires')) {
+        profileUpdates.city = deliveryCity.trim() || 'Melo';
+      }
+      if (Object.keys(profileUpdates).length > 0) {
+        updateProfile(profileUpdates);
+      }
+
       const order = createOrder({
         customerName: customerName.trim(),
         customerCedula: customerCedula.trim(),
@@ -182,7 +218,7 @@ export const CheckoutModal: React.FC = () => {
         deliveryMethod,
         deliveryAddress: isDelivery ? deliveryAddress.trim() : undefined,
         apartment: isDelivery ? apartment.trim() : undefined,
-        deliveryCity: isDelivery ? deliveryCity.trim() : undefined,
+        deliveryCity: isDelivery ? deliveryCity.trim() || 'Melo' : undefined,
         paymentMethod,
         cashAmountToPayWith: paymentMethod === 'cash' && needsChange ? parsedCash : undefined,
         cardLast4: paymentMethod === 'card' ? cardNumber.slice(-4) || '8842' : undefined,
@@ -443,13 +479,14 @@ export const CheckoutModal: React.FC = () => {
 
                   <div>
                     <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Barrio / Zona
+                      Barrio / Zona *
                     </label>
                     <input
                       type="text"
+                      required={isDelivery}
                       value={deliveryCity}
                       onChange={(e) => setDeliveryCity(e.target.value)}
-                      placeholder="Ej: Centro"
+                      placeholder="Ej: Melo"
                       className="w-full px-3 py-2 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                     />
                   </div>
