@@ -15,6 +15,10 @@ export const ProductCatalog: React.FC = () => {
     selectedCategory,
     setSelectedCategory,
     setIsLogoModalOpen,
+    allRegisteredUsers,
+    setDashboardInitialTab,
+    setIsUserDashboardOpen,
+    showToast,
   } = useStore();
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -28,23 +32,56 @@ export const ProductCatalog: React.FC = () => {
   const [phoneInput, setPhoneInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [addressInput, setAddressInput] = useState('');
+  const [cityInput, setCityInput] = useState('Melo');
 
   const handleInlineRegister = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nameInput.trim() || !cedulaInput.trim()) return;
+    if (
+      !nameInput.trim() ||
+      !cedulaInput.trim() ||
+      !phoneInput.trim() ||
+      !addressInput.trim() ||
+      !cityInput.trim() ||
+      !passwordInput.trim()
+    ) {
+      showToast('Completá todos los campos obligatorios (*), incluyendo nombre, teléfono y dirección.');
+      return;
+    }
     register({
       name: nameInput.trim(),
       cedula: cedulaInput.trim(),
-      phone: phoneInput.trim() || '+54 9 11 0000-0000',
-      address: addressInput.trim() || 'Dirección para entrega',
-      city: 'Buenos Aires',
+      phone: phoneInput.trim(),
+      password: passwordInput,
+      address: addressInput.trim(),
+      city: cityInput.trim() || 'Melo',
     });
   };
 
   const handleInlineLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!cedulaInput.trim()) return;
-    login(cedulaInput.trim(), passwordInput);
+    const digitsOnly = cedulaInput.replace(/[^0-9]/g, '');
+    const existing = allRegisteredUsers.find(
+      (u) => Boolean(digitsOnly) && String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
+    );
+    const ok = login(cedulaInput.trim(), passwordInput);
+    if (ok) {
+      const needsProfile =
+        !existing ||
+        !existing.name?.trim() ||
+        existing.name.startsWith('Cliente CI ') ||
+        existing.name === 'Cliente OZ' ||
+        !existing.phone?.trim() ||
+        existing.phone.includes('5555-0000') ||
+        !existing.address?.trim() ||
+        existing.address === 'Dirección por definir' ||
+        existing.address === 'Retiro en local';
+      if (needsProfile) {
+        setDashboardInitialTab('perfil');
+        setIsUserDashboardOpen(true);
+        showToast('Completá tu nombre, teléfono y dirección para finalizar tu registro.');
+      }
+    }
   };
 
   const METRO_GROUP_ORDER: Record<string, number> = {
@@ -251,17 +288,34 @@ export const ProductCatalog: React.FC = () => {
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-stone-700 mb-1">
-                        Dirección para Delivery (Opcional)
-                      </label>
-                      <input
-                        type="text"
-                        value={addressInput}
-                        onChange={(e) => setAddressInput(e.target.value)}
-                        placeholder="Calle, altura y piso/depto"
-                        className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-stone-700 mb-1">
+                          Dirección para Delivery *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={addressInput}
+                          onChange={(e) => setAddressInput(e.target.value)}
+                          placeholder="Calle, número y esquina/depto"
+                          className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-stone-700 mb-1">
+                          Barrio / Zona *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={cityInput}
+                          onChange={(e) => setCityInput(e.target.value)}
+                          placeholder="Melo"
+                          className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
+                        />
+                      </div>
                     </div>
 
                     <button
