@@ -16,6 +16,7 @@ export const UserAuthModal: React.FC = () => {
     storeSettings,
     setShowWelcomeScreen,
     showToast,
+    allRegisteredUsers,
   } = useStore();
 
   const mode = authModalMode;
@@ -31,25 +32,51 @@ export const UserAuthModal: React.FC = () => {
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regAddress, setRegAddress] = useState('');
+  const [regCity, setRegCity] = useState('Melo');
 
   if (!isAuthModalOpen) return null;
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginCedula.trim()) return;
+    const digitsOnly = loginCedula.replace(/[^0-9]/g, '');
+    const existing = allRegisteredUsers.find(
+      (u) => Boolean(digitsOnly) && String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
+    );
     const ok = login(loginCedula, loginPassword);
     if (ok) {
+      const needsProfile =
+        !existing ||
+        !existing.name?.trim() ||
+        existing.name.startsWith('Cliente CI ') ||
+        existing.name === 'Cliente OZ' ||
+        !existing.phone?.trim() ||
+        existing.phone.includes('5555-0000') ||
+        !existing.address?.trim() ||
+        existing.address === 'Dirección por definir' ||
+        existing.address === 'Retiro en local';
+
       setShowWelcomeScreen(false);
       setIsAuthModalOpen(false);
-      setDashboardInitialTab('pedidos');
+      setDashboardInitialTab(needsProfile ? 'perfil' : 'pedidos');
       setIsUserDashboardOpen(true);
+      if (needsProfile) {
+        showToast('Completá tu nombre, teléfono y dirección para finalizar tu registro.');
+      }
     }
   };
 
   const handleRegisterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regCedula.trim() || !regPhone.trim() || !regPassword.trim()) {
-      showToast('Por favor completá los campos obligatorios (*)');
+    if (
+      !regName.trim() ||
+      !regCedula.trim() ||
+      !regPhone.trim() ||
+      !regAddress.trim() ||
+      !regCity.trim() ||
+      !regPassword.trim()
+    ) {
+      showToast('Por favor completá todos los campos obligatorios (*), incluyendo tu dirección.');
       return;
     }
 
@@ -58,8 +85,8 @@ export const UserAuthModal: React.FC = () => {
       cedula: regCedula.trim(),
       phone: regPhone.trim(),
       password: regPassword,
-      address: regAddress.trim() || "Retiro en local",
-      city: 'Montevideo',
+      address: regAddress.trim(),
+      city: regCity.trim() || 'Melo',
     });
 
     setShowWelcomeScreen(false);
@@ -278,18 +305,35 @@ export const UserAuthModal: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1 flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Dirección para Delivery (Calle, número y depto)</span>
-                </label>
-                <input
-                  type="text"
-                  value={regAddress}
-                  onChange={(e) => setRegAddress(e.target.value)}
-                  placeholder="Ej: Av. 18 de Julio 1234, Apto 201"
-                  className="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-stone-700 mb-1 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Dirección completa (Calle, número y depto) *</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regAddress}
+                    onChange={(e) => setRegAddress(e.target.value)}
+                    placeholder="Ej: Aparicio Saravia 740, Apto 2"
+                    className="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">
+                    Barrio / Zona *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regCity}
+                    onChange={(e) => setRegCity(e.target.value)}
+                    placeholder="Melo"
+                    className="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                  />
+                </div>
               </div>
 
               <div>
