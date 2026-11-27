@@ -13,6 +13,8 @@ export const Header: React.FC = () => {
     setIsUserDashboardOpen,
     setDashboardInitialTab,
     storeSettings,
+    isStoreCurrentlyOpen,
+    storeStatusReason,
     selectedCategory,
     setSelectedCategory,
     setIsAdminOpen,
@@ -46,6 +48,13 @@ export const Header: React.FC = () => {
       <div className="bg-amber-600 text-stone-950 text-[11px] sm:text-xs font-bold py-1 px-4 text-center tracking-wide">
         {storeSettings.topBannerAnnouncement}
       </div>
+      {!isStoreCurrentlyOpen && (
+        <div className="bg-rose-700 text-white text-[11px] sm:text-xs font-bold py-1.5 px-4 text-center tracking-wide border-t border-rose-500/40">
+          🔴 {storeStatusReason === 'schedule_closed'
+            ? `LOCAL CERRADO POR HORARIO (${storeSettings.autoOpenTime} a ${storeSettings.autoCloseTime} hs)`
+            : 'LOCAL CERRADO MOMENTÁNEAMENTE'} — {storeSettings.closedMessage}
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-2 sm:gap-6 h-16 sm:h-20">
