@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, SlidersHorizontal, Sparkles, UserPlus, LogIn, CheckCircle2, Flame, Truck, CreditCard, Ruler, Pizza, Info, Tag, Clock, ChevronDown } from 'lucide-react';
+import { Search, SlidersHorizontal, Sparkles, UserPlus, LogIn, CheckCircle2, Flame, Truck, CreditCard, Ruler, Pizza, Info, Tag, Clock, ChevronDown, AlertCircle } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { STORE_CATEGORIES } from '../data/products';
 import { ProductCard } from './ProductCard';
@@ -15,7 +15,6 @@ export const ProductCatalog: React.FC = () => {
     selectedCategory,
     setSelectedCategory,
     setIsLogoModalOpen,
-    allRegisteredUsers,
     setDashboardInitialTab,
     setIsUserDashboardOpen,
     showToast,
@@ -33,9 +32,12 @@ export const ProductCatalog: React.FC = () => {
   const [passwordInput, setPasswordInput] = useState('');
   const [addressInput, setAddressInput] = useState('');
   const [cityInput, setCityInput] = useState('Melo');
+  const [inlineAuthError, setInlineAuthError] = useState<string | null>(null);
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
 
-  const handleInlineRegister = (e: React.FormEvent) => {
+  const handleInlineRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    setInlineAuthError(null);
     if (
       !nameInput.trim() ||
       !cedulaInput.trim() ||
@@ -44,30 +46,59 @@ export const ProductCatalog: React.FC = () => {
       !cityInput.trim() ||
       !passwordInput.trim()
     ) {
-      showToast('Completá todos los campos obligatorios (*), incluyendo nombre, teléfono y dirección.');
+      const msg = 'Completá todos los campos obligatorios (*), incluyendo nombre, teléfono y dirección.';
+      setInlineAuthError(msg);
+      showToast(msg);
       return;
     }
-    register({
-      name: nameInput.trim(),
-      cedula: cedulaInput.trim(),
-      phone: phoneInput.trim(),
-      password: passwordInput,
-      address: addressInput.trim(),
-      city: cityInput.trim() || 'Melo',
-    });
+    if (passwordInput.length < 4) {
+      const msg = 'La contraseña debe tener al menos 4 caracteres.';
+      setInlineAuthError(msg);
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    try {
+      const result = await register({
+        name: nameInput.trim(),
+        cedula: cedulaInput.trim(),
+        phone: phoneInput.trim(),
+        password: passwordInput,
+        address: addressInput.trim(),
+        city: cityInput.trim() || 'Melo',
+      });
+      if (!result.user) {
+        setInlineAuthError(result.error || 'No se pudo completar el registro.');
+        return;
+      }
+      setPasswordInput('');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
   };
 
-  const handleInlineLogin = (e: React.FormEvent) => {
+  const handleInlineLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cedulaInput.trim()) return;
-    const digitsOnly = cedulaInput.replace(/[^0-9]/g, '');
-    const existing = allRegisteredUsers.find(
-      (u) => Boolean(digitsOnly) && String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
-    );
-    const ok = login(cedulaInput.trim(), passwordInput);
-    if (ok) {
+    setInlineAuthError(null);
+    if (!cedulaInput.trim()) {
+      setInlineAuthError('Ingresá tu número de Cédula.');
+      return;
+    }
+    if (!passwordInput) {
+      setInlineAuthError('Ingresá tu contraseña.');
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    try {
+      const result = await login(cedulaInput.trim(), passwordInput);
+      if (!result.ok || !result.user) {
+        setInlineAuthError(result.error || 'Cédula o contraseña incorrecta.');
+        return;
+      }
+      setPasswordInput('');
+      const existing = result.user;
       const needsProfile =
-        !existing ||
         !existing.name?.trim() ||
         existing.name.startsWith('Cliente CI ') ||
         existing.name === 'Cliente OZ' ||
@@ -81,6 +112,8 @@ export const ProductCatalog: React.FC = () => {
         setIsUserDashboardOpen(true);
         showToast('Completá tu nombre, teléfono y dirección para finalizar tu registro.');
       }
+    } finally {
+      setIsSubmittingAuth(false);
     }
   };
 
@@ -181,7 +214,10 @@ export const ProductCatalog: React.FC = () => {
                 <div className="grid grid-cols-2 p-1 bg-stone-100 rounded-lg text-xs font-semibold mb-6">
                   <button
                     type="button"
-                    onClick={() => setRegMode('register')}
+                    onClick={() => {
+                      setRegMode('register');
+                      setInlineAuthError(null);
+                    }}
                     className={`py-2 rounded-md transition-all ${
                       regMode === 'register'
                         ? 'bg-white text-stone-900 shadow-2xs'
@@ -192,7 +228,10 @@ export const ProductCatalog: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setRegMode('login')}
+                    onClick={() => {
+                      setRegMode('login');
+                      setInlineAuthError(null);
+                    }}
                     className={`py-2 rounded-md transition-all ${
                       regMode === 'login'
                         ? 'bg-white text-stone-900 shadow-2xs'
@@ -280,9 +319,13 @@ export const ProductCatalog: React.FC = () => {
                         <input
                           type="password"
                           required
+                          minLength={4}
                           value={passwordInput}
-                          onChange={(e) => setPasswordInput(e.target.value)}
-                          placeholder="••••••••"
+                          onChange={(e) => {
+                            setPasswordInput(e.target.value);
+                            if (inlineAuthError) setInlineAuthError(null);
+                          }}
+                          placeholder="Mínimo 4 caracteres"
                           className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
                         />
                       </div>
@@ -318,12 +361,20 @@ export const ProductCatalog: React.FC = () => {
                       </div>
                     </div>
 
+                    {inlineAuthError && (
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <span>{inlineAuthError}</span>
+                      </div>
+                    )}
+
                     <button
                       type="submit"
-                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-sm font-bold transition-all shadow-sm active:scale-[0.99]"
+                      disabled={isSubmittingAuth}
+                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-stone-900 hover:bg-stone-800 disabled:opacity-60 text-white rounded-xl text-sm font-bold transition-all shadow-sm active:scale-[0.99]"
                     >
                       <UserPlus className="w-4 h-4 text-amber-400" />
-                      <span>Registrarme con Cédula y Ver Menú</span>
+                      <span>{isSubmittingAuth ? 'Registrando...' : 'Registrarme con Cédula y Ver Menú'}</span>
                     </button>
                   </form>
                 ) : (
@@ -336,7 +387,10 @@ export const ProductCatalog: React.FC = () => {
                         type="text"
                         required
                         value={cedulaInput}
-                        onChange={(e) => setCedulaInput(e.target.value)}
+                        onChange={(e) => {
+                          setCedulaInput(e.target.value);
+                          if (inlineAuthError) setInlineAuthError(null);
+                        }}
                         placeholder="Ej: 4.812.394-5"
                         className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white font-mono"
                       />
@@ -350,18 +404,29 @@ export const ProductCatalog: React.FC = () => {
                         type="password"
                         required
                         value={passwordInput}
-                        onChange={(e) => setPasswordInput(e.target.value)}
+                        onChange={(e) => {
+                          setPasswordInput(e.target.value);
+                          if (inlineAuthError) setInlineAuthError(null);
+                        }}
                         placeholder="••••••••"
                         className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white"
                       />
                     </div>
 
+                    {inlineAuthError && (
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <span>{inlineAuthError}</span>
+                      </div>
+                    )}
+
                     <button
                       type="submit"
-                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-sm font-bold transition-all shadow-sm active:scale-[0.99]"
+                      disabled={isSubmittingAuth}
+                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-stone-900 hover:bg-stone-800 disabled:opacity-60 text-white rounded-xl text-sm font-bold transition-all shadow-sm active:scale-[0.99]"
                     >
                       <LogIn className="w-4 h-4 text-amber-400" />
-                      <span>Ingresar con Cédula</span>
+                      <span>{isSubmittingAuth ? 'Verificando...' : 'Ingresar con Cédula'}</span>
                     </button>
                   </form>
                 )}
