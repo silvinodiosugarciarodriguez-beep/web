@@ -58,7 +58,10 @@ export const ProductDetailModal: React.FC = () => {
     }
   };
 
+  const isSoldOut = selectedProduct.available === false;
+
   const handleAddToCart = () => {
+    if (isSoldOut) return;
     if (!user) {
       openAuthModal('register');
       return;
@@ -424,14 +427,20 @@ export const ProductDetailModal: React.FC = () => {
               </div>
 
               {/* Purchase Footer: Stepper & CTA */}
-              <div className="mt-6 pt-4 border-t border-stone-200">
+              <div className="mt-6 pt-4 border-t border-stone-200 space-y-3">
+                {isSoldOut && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold text-center">
+                    Este producto está agotado por hoy. Volverá a estar disponible próximamente.
+                  </div>
+                )}
+
                 <div className="flex items-center gap-3">
                   
                   {/* Quantity Stepper */}
                   <div className="flex items-center border border-stone-300 rounded-lg bg-stone-50 p-1">
                     <button
                       onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                      disabled={quantity <= 1}
+                      disabled={quantity <= 1 || isSoldOut}
                       className="p-1.5 text-stone-600 hover:text-stone-900 disabled:opacity-30 rounded hover:bg-stone-200/60"
                       aria-label="Disminuir cantidad"
                     >
@@ -442,7 +451,8 @@ export const ProductDetailModal: React.FC = () => {
                     </span>
                     <button
                       onClick={() => setQuantity((q) => q + 1)}
-                      className="p-1.5 text-stone-600 hover:text-stone-900 rounded hover:bg-stone-200/60"
+                      disabled={isSoldOut}
+                      className="p-1.5 text-stone-600 hover:text-stone-900 disabled:opacity-30 rounded hover:bg-stone-200/60"
                       aria-label="Aumentar cantidad"
                     >
                       <Plus className="w-4 h-4" />
@@ -450,7 +460,15 @@ export const ProductDetailModal: React.FC = () => {
                   </div>
 
                   {/* Add to Cart button / Register required */}
-                  {user ? (
+                  {isSoldOut ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-bold text-sm bg-rose-100 text-rose-700 border border-rose-200 cursor-not-allowed"
+                    >
+                      <span>Agotado por hoy</span>
+                    </button>
+                  ) : user ? (
                     <button
                       onClick={handleAddToCart}
                       disabled={added}
