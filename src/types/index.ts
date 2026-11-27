@@ -44,6 +44,7 @@ export interface Product {
   supportsCustomFlavors?: boolean; // true for 32cm pizzetas, gourmet pizzetas, and pizza por metro!
   subCategory?: string; // e.g. 'arma_tu' | 'medio_metro_sabores' | 'metro_entero_sabores' | 'muzzarella_pala'
   burgerTiers?: BurgerTiers; // Tiers for burgers: sencilla, doble, triple, cuadruple
+  available?: boolean; // false = agotado temporalmente ("Agotado hoy")
   deleted?: boolean;
   deletedAt?: string;
   updatedAt?: string;
