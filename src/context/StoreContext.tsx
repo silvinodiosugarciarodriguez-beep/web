@@ -99,6 +99,7 @@ function normalizeProduct(raw: any, base?: Product): Product {
       safeObj.burgerTiers && typeof safeObj.burgerTiers === 'object'
         ? safeObj.burgerTiers
         : base?.burgerTiers,
+    available: safeObj.available === false ? false : true,
     deleted: safeObj.deleted === true,
     deletedAt: typeof safeObj.deletedAt === 'string' ? safeObj.deletedAt : undefined,
     updatedAt: typeof safeObj.updatedAt === 'string' ? safeObj.updatedAt : base?.updatedAt,
@@ -220,15 +221,110 @@ function normalizeCart(raw: any): CartItem[] {
     }));
 }
 
+const SCHEDULE_DAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
+const SCHEDULE_DAY_NAMES: Record<number, string> = {
+  0: 'Domingo',
+  1: 'Lunes',
+  2: 'Martes',
+  3: 'Miércoles',
+  4: 'Jueves',
+  5: 'Viernes',
+  6: 'Sábado',
+};
+
+export function formatScheduleHoursText(
+  openTime: string,
+  closeTime: string,
+  openDays: number[] = [0, 2, 3, 4, 5, 6]
+): string {
+  const validDays = SCHEDULE_DAY_ORDER.filter((d) => openDays.includes(d));
+  let daysLabel = 'Martes a Domingo';
+  if (validDays.length === 7) {
+    daysLabel = 'Todos los días';
+  } else if (validDays.length >= 2) {
+    const indices = validDays.map((d) => SCHEDULE_DAY_ORDER.indexOf(d));
+    const isContiguous = indices.every((idx, i) => i === 0 || idx === indices[i - 1] + 1);
+    if (isContiguous) {
+      daysLabel = `${SCHEDULE_DAY_NAMES[validDays[0]]} a ${SCHEDULE_DAY_NAMES[validDays[validDays.length - 1]]}`;
+    } else {
+      daysLabel = validDays.map((d) => SCHEDULE_DAY_NAMES[d]).join(', ');
+    }
+  } else if (validDays.length === 1) {
+    daysLabel = SCHEDULE_DAY_NAMES[validDays[0]];
+  }
+  return `${daysLabel} de ${openTime} a ${closeTime} hs`;
+}
+
+export function extractTimeRangeFromText(text: string): { openTime: string; closeTime: string } | null {
+  const match = /\b(\d{1,2})[:.](\d{2})\s*(?:a|-|hasta)\s*(\d{1,2})[:.](\d{2})\b/i.exec(text || '');
+  if (!match) return null;
+  const h1 = Number(match[1]);
+  const m1 = Number(match[2]);
+  const h2 = Number(match[3]);
+  const m2 = Number(match[4]);
+  if (h1 < 0 || h1 > 23 || m1 < 0 || m1 > 59 || h2 < 0 || h2 > 23 || m2 < 0 || m2 > 59) {
+    return null;
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return {
+    openTime: `${pad(h1)}:${pad(m1)}`,
+    closeTime: `${pad(h2)}:${pad(m2)}`,
+  };
+}
+
 function normalizeSettings(raw: any, fallback: StoreSettings): StoreSettings {
   const safeObj = raw && typeof raw === 'object' ? raw : {};
   const rawShipping = Number(safeObj.shippingFee);
   const rawThreshold = Number(safeObj.freeShippingThreshold);
+  const validModes: StoreStatusMode[] = ['auto', 'manual_open', 'manual_closed'];
+  const statusMode: StoreStatusMode = validModes.includes(safeObj.statusMode)
+    ? safeObj.statusMode
+    : safeObj.isStoreOpen === false
+    ? 'manual_closed'
+    : fallback.statusMode;
+
+  const parsedDays = Array.isArray(safeObj.autoOpenDays)
+    ? safeObj.autoOpenDays
+        .map((d: any) => Number(d))
+        .filter((d: number) => Number.isInteger(d) && d >= 0 && d <= 6)
+    : fallback.autoOpenDays;
+  const resolvedDays = parsedDays.length > 0 ? parsedDays : fallback.autoOpenDays;
+
+  let resolvedOpenTime =
+    typeof safeObj.autoOpenTime === 'string' && /^\d{1,2}:\d{2}$/.test(safeObj.autoOpenTime.trim())
+      ? safeObj.autoOpenTime.trim()
+      : fallback.autoOpenTime;
+  let resolvedCloseTime =
+    typeof safeObj.autoCloseTime === 'string' && /^\d{1,2}:\d{2}$/.test(safeObj.autoCloseTime.trim())
+      ? safeObj.autoCloseTime.trim()
+      : fallback.autoCloseTime;
+
+  const rawStoreHours =
+    typeof safeObj.storeHours === 'string' && safeObj.storeHours.trim()
+      ? safeObj.storeHours.trim()
+      : fallback.storeHours;
+  const legacyDefaultHours = 'Martes a Domingo de 19:30 a 00:30 hs';
+
+  // If the owner updated storeHours text (e.g. "20:00 a 00:30") while autoOpenTime/autoCloseTime remained on 19:30-00:30 default, sync times from storeHours
+  if (rawStoreHours !== legacyDefaultHours && resolvedOpenTime === '19:30' && resolvedCloseTime === '00:30') {
+    const parsedRange = extractTimeRangeFromText(rawStoreHours);
+    if (parsedRange && (parsedRange.openTime !== '19:30' || parsedRange.closeTime !== '00:30')) {
+      resolvedOpenTime = parsedRange.openTime;
+      resolvedCloseTime = parsedRange.closeTime;
+    }
+  }
+
+  const generatedHours = formatScheduleHoursText(resolvedOpenTime, resolvedCloseTime, resolvedDays);
+  const resolvedStoreHours =
+    rawStoreHours === legacyDefaultHours && generatedHours !== legacyDefaultHours
+      ? generatedHours
+      : rawStoreHours;
+
   return {
     storeName: typeof safeObj.storeName === 'string' && safeObj.storeName.trim() ? safeObj.storeName : fallback.storeName,
     whatsappNumber: typeof safeObj.whatsappNumber === 'string' && safeObj.whatsappNumber.trim() ? safeObj.whatsappNumber : fallback.whatsappNumber,
     storeAddress: typeof safeObj.storeAddress === 'string' && safeObj.storeAddress.trim() ? safeObj.storeAddress : fallback.storeAddress,
-    storeHours: typeof safeObj.storeHours === 'string' && safeObj.storeHours.trim() ? safeObj.storeHours : fallback.storeHours,
+    storeHours: resolvedStoreHours,
     shippingFee: Number.isFinite(rawShipping) ? rawShipping : fallback.shippingFee,
     freeShippingThreshold: Number.isFinite(rawThreshold) ? rawThreshold : fallback.freeShippingThreshold,
     logoUrl: cleanAssetUrl(safeObj.logoUrl, fallback.logoUrl),
@@ -236,6 +332,12 @@ function normalizeSettings(raw: any, fallback: StoreSettings): StoreSettings {
     topBannerAnnouncement: typeof safeObj.topBannerAnnouncement === 'string' ? safeObj.topBannerAnnouncement : fallback.topBannerAnnouncement,
     heroHeadline: typeof safeObj.heroHeadline === 'string' && safeObj.heroHeadline.trim() ? safeObj.heroHeadline : fallback.heroHeadline,
     heroSubtitle: typeof safeObj.heroSubtitle === 'string' && safeObj.heroSubtitle.trim() ? safeObj.heroSubtitle : fallback.heroSubtitle,
+    isStoreOpen: typeof safeObj.isStoreOpen === 'boolean' ? safeObj.isStoreOpen : fallback.isStoreOpen,
+    closedMessage: typeof safeObj.closedMessage === 'string' && safeObj.closedMessage.trim() ? safeObj.closedMessage : fallback.closedMessage,
+    statusMode,
+    autoOpenTime: resolvedOpenTime,
+    autoCloseTime: resolvedCloseTime,
+    autoOpenDays: resolvedDays,
   };
 }
 
@@ -282,9 +384,13 @@ function isProductModifiedFromDefault(current: Product, base: Product): boolean 
     current.image !== base.image ||
     current.unit !== base.unit ||
     Boolean(current.supportsCustomFlavors) !== Boolean(base.supportsCustomFlavors) ||
-    (current.subCategory || '') !== (base.subCategory || '')
+    (current.subCategory || '') !== (base.subCategory || '') ||
+    (current.available !== false) !== (base.available !== false)
   );
 }
+
+export type StoreStatusMode = 'auto' | 'manual_open' | 'manual_closed';
+export type StoreStatusReason = 'manual_open' | 'manual_closed' | 'schedule_open' | 'schedule_closed';
 
 export interface StoreSettings {
   storeName: string;
@@ -298,6 +404,61 @@ export interface StoreSettings {
   topBannerAnnouncement: string;
   heroHeadline: string;
   heroSubtitle: string;
+  isStoreOpen: boolean;
+  closedMessage: string;
+  statusMode: StoreStatusMode;
+  autoOpenTime: string;
+  autoCloseTime: string;
+  autoOpenDays: number[];
+}
+
+export function evaluateStoreOpen(
+  settings: StoreSettings,
+  now: Date = new Date()
+): { isOpen: boolean; reason: StoreStatusReason } {
+  if (settings.statusMode === 'manual_open') {
+    return { isOpen: true, reason: 'manual_open' };
+  }
+  if (settings.statusMode === 'manual_closed') {
+    return { isOpen: false, reason: 'manual_closed' };
+  }
+
+  const parseMinutes = (hhmm: string, fallback: number): number => {
+    const match = /^(\d{1,2}):(\d{2})$/.exec((hhmm || '').trim());
+    if (!match) return fallback;
+    const h = Number(match[1]);
+    const m = Number(match[2]);
+    if (h < 0 || h > 23 || m < 0 || m > 59) return fallback;
+    return h * 60 + m;
+  };
+
+  const openMin = parseMinutes(settings.autoOpenTime, 19 * 60 + 30);
+  const closeMin = parseMinutes(settings.autoCloseTime, 0 * 60 + 30);
+  const days =
+    Array.isArray(settings.autoOpenDays) && settings.autoOpenDays.length > 0
+      ? settings.autoOpenDays
+      : [0, 2, 3, 4, 5, 6];
+
+  const today = now.getDay(); // 0=Dom..6=Sab
+  const yesterday = (today + 6) % 7;
+  const currentMin = now.getHours() * 60 + now.getMinutes();
+
+  let openNow = false;
+  if (openMin === closeMin) {
+    openNow = days.includes(today);
+  } else if (closeMin > openMin) {
+    openNow = days.includes(today) && currentMin >= openMin && currentMin < closeMin;
+  } else {
+    // Horario nocturno que cruza medianoche (ej: 19:30 a 00:30)
+    const inEvening = days.includes(today) && currentMin >= openMin;
+    const inAfterMidnight = days.includes(yesterday) && currentMin < closeMin;
+    openNow = inEvening || inAfterMidnight;
+  }
+
+  return {
+    isOpen: openNow,
+    reason: openNow ? 'schedule_open' : 'schedule_closed',
+  };
 }
 
 interface CreateOrderInput {
@@ -314,6 +475,14 @@ interface CreateOrderInput {
   cardLast4?: string;
   cardHolder?: string;
   customerNotes?: string;
+}
+
+export interface LoginResult {
+  ok: boolean;
+  error?: string;
+  user?: User;
+  needsPasswordSetup?: boolean;
+  hasRegisteredPhone?: boolean;
 }
 
 interface StoreContextType {
@@ -335,19 +504,26 @@ interface StoreContextType {
   cartSubtotal: number;
   
   user: User | null;
-  login: (cedula: string, password?: string) => Promise<{ ok: boolean; error?: string; user?: User }>;
+  login: (cedula: string, password?: string) => Promise<LoginResult>;
+  activateLegacyUserPassword: (cedula: string, phoneLast4: string, newPassword: string) => Promise<LoginResult>;
   register: (data: Omit<User, 'id' | 'registeredAt'>) => Promise<{ user: User | null; error?: string }>;
   logout: () => void;
   updateProfile: (data: Partial<User>) => void;
+  changeUserPassword: (currentPassword: string, newPassword: string) => { ok: boolean; error?: string };
+  adminResetUserPassword: (userId: string, newPassword: string) => { ok: boolean; error?: string };
+  deleteUser: (userId: string) => { ok: boolean; error?: string };
   loginAsDemo: () => void;
 
   orders: Order[];
   userOrders: Order[];
   createOrder: (input: CreateOrderInput) => Order;
+  reorderFromOrder: (order: Order) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
   
   storeSettings: StoreSettings;
   updateStoreSettings: (settings: Partial<StoreSettings>) => void;
+  isStoreCurrentlyOpen: boolean;
+  storeStatusReason: StoreStatusReason;
   
   formatWhatsAppMessage: (order: Order) => string;
   getWhatsAppUrl: (order: Order) => string;
@@ -421,6 +597,12 @@ const DEFAULT_SETTINGS: StoreSettings = {
   topBannerAnnouncement: '🛵 ¡Envíos gratis a domicilio a partir de $250 pesos! · Pago en efectivo o con tarjeta',
   heroHeadline: 'No somos una pizzería tradicional. Somos un Laboratorio.',
   heroSubtitle: 'Aquí no seguimos reglas, seguimos el instinto. Nuestra cocina es un laboratorio de experimentación donde la pasión por los nuevos sabores manda. Nacimos en 2020 con una receta de masa obsesiva para llevar alegría a tu mesa.',
+  isStoreOpen: true,
+  closedMessage: 'En este momento nuestra cocina está cerrada o con pedidos pausados. Consultá por WhatsApp o volvé en nuestro horario habitual.',
+  statusMode: 'auto',
+  autoOpenTime: '19:30',
+  autoCloseTime: '00:30',
+  autoOpenDays: [0, 2, 3, 4, 5, 6], // Martes a Domingo
 };
 
 const DEMO_USER: User = {
@@ -519,6 +701,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const hasReceivedRemoteProductsRef = useRef(false);
+  const hasReceivedRemoteUsersRef = useRef(false);
   const localInitialBackupRef = useRef<Product[]>(products);
   const productsRef = useRef<Product[]>(products);
   productsRef.current = products;
@@ -639,6 +822,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const storeSettingsRef = useRef<StoreSettings>(storeSettings);
   storeSettingsRef.current = storeSettings;
 
+  // Periodic clock tick so automatic open/closed transitions happen in real time without reload
+  const [scheduleNow, setScheduleNow] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setScheduleNow(new Date());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const { isOpen: isStoreCurrentlyOpen, reason: storeStatusReason } = evaluateStoreOpen(storeSettings, scheduleNow);
+
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -755,7 +949,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     let unsubUsers = () => {};
     try {
       unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-        if (!snapshot.empty) {
+        if (!snapshot.empty || hasReceivedRemoteUsersRef.current) {
+          hasReceivedRemoteUsersRef.current = true;
           const remoteUsers: User[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data();
@@ -763,33 +958,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               remoteUsers.push(normalizeUser({ ...data, id: data.id || docSnap.id }));
             }
           });
-          if (remoteUsers.length > 0) {
-            setAllRegisteredUsers((prev) => {
-              const mergedMap = new Map<string, User>();
-              for (const u of prev) {
-                mergedMap.set(u.id, normalizeUser(u));
-              }
-              for (const ru of remoteUsers) {
-                mergedMap.set(ru.id, ru);
-              }
-              const merged = Array.from(mergedMap.values());
-              try {
-                localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(merged));
-              } catch {}
-              return merged;
-            });
+          const hasDemoInRemote = remoteUsers.some((u) => u.id === DEMO_USER.id);
+          const authoritativeUsers = hasDemoInRemote ? remoteUsers : [DEMO_USER, ...remoteUsers];
 
-            setUser((currentUser) => {
-              if (!currentUser) return null;
-              const cleanCurrent = String(currentUser.cedula || '').replace(/[^0-9]/g, '');
-              const match = remoteUsers.find(
-                (ru) =>
-                  ru.id === currentUser.id ||
-                  (cleanCurrent && String(ru.cedula || '').replace(/[^0-9]/g, '') === cleanCurrent)
-              );
-              return match ? normalizeUser({ ...currentUser, ...match }) : currentUser;
-            });
-          }
+          setAllRegisteredUsers(authoritativeUsers);
+          try {
+            localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(authoritativeUsers));
+          } catch {}
+
+          setUser((currentUser) => {
+            if (!currentUser) return null;
+            const cleanCurrent = String(currentUser.cedula || '').replace(/[^0-9]/g, '');
+            const match = remoteUsers.find(
+              (ru) =>
+                ru.id === currentUser.id ||
+                (cleanCurrent && String(ru.cedula || '').replace(/[^0-9]/g, '') === cleanCurrent)
+            );
+            return match ? normalizeUser({ ...currentUser, ...match }) : currentUser;
+          });
         }
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'users', false);
@@ -916,6 +1102,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
+    if (product.available === false) {
+      showToast(`⚠️ "${product.name}" está agotado por hoy.`);
+      return;
+    }
+
     const flavors = selectedFlavors && selectedFlavors.length > 0 ? selectedFlavors : undefined;
     const isArmaTu = Boolean(product.id.includes('arma-tu'));
     const extraFlavorsCost = flavors ? calculateExtraFlavorsCost(flavors.length, isArmaTu) : 0;
@@ -999,8 +1190,33 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return sum + itemUnitPrice * (Number(item?.quantity) || 0);
   }, 0);
 
-  // Helper to merge local and remote registered users by id
+  // Helper to load registered users (Firestore authoritative when online, local fallback offline)
   const loadMergedRegisteredUsers = async (fetchRemote: boolean): Promise<User[]> => {
+    if (fetchRemote) {
+      try {
+        const snapshot = await getDocs(collection(db, 'users'));
+        const remoteUsers: User[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data && (data.id || docSnap.id)) {
+            remoteUsers.push(normalizeUser({ ...data, id: data.id || docSnap.id }));
+          }
+        });
+        if (!snapshot.empty || hasReceivedRemoteUsersRef.current) {
+          hasReceivedRemoteUsersRef.current = true;
+          const hasDemoInRemote = remoteUsers.some((u) => u.id === DEMO_USER.id);
+          const authoritative = hasDemoInRemote ? remoteUsers : [DEMO_USER, ...remoteUsers];
+          setAllRegisteredUsers(authoritative);
+          try {
+            localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(authoritative));
+          } catch {}
+          return authoritative;
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, 'users', false);
+      }
+    }
+
     const mergedMap = new Map<string, User>();
     for (const u of allRegisteredUsers) {
       mergedMap.set(u.id, normalizeUser(u));
@@ -1020,26 +1236,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
     } catch {}
 
-    if (fetchRemote) {
-      try {
-        const snapshot = await getDocs(collection(db, 'users'));
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data && (data.id || docSnap.id)) {
-            const norm = normalizeUser({ ...data, id: data.id || docSnap.id });
-            mergedMap.set(norm.id, norm);
-          }
-        });
-        const merged = Array.from(mergedMap.values());
-        setAllRegisteredUsers(merged);
-        try {
-          localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(merged));
-        } catch {}
-      } catch (err) {
-        handleFirestoreError(err, OperationType.LIST, 'users', false);
-      }
-    }
-
     return Array.from(mergedMap.values());
   };
 
@@ -1055,7 +1251,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   // Auth operations using Cédula + Password verification
-  const login = async (cedula: string, password?: string): Promise<{ ok: boolean; error?: string; user?: User }> => {
+  const login = async (cedula: string, password?: string): Promise<LoginResult> => {
     const cleanCedula = cedula.trim();
     const digitsOnly = cleanCedula.replace(/[^0-9]/g, '');
     const enteredPassword = typeof password === 'string' ? password : '';
@@ -1071,16 +1267,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return { ok: false, error: msg };
     }
 
-    let savedUsers = await loadMergedRegisteredUsers(false);
-    let found = findRealUserByCedula(savedUsers, digitsOnly);
+    // Always merge remote Firestore users so password resets/changes from any device are honored immediately
+    const savedUsers = await loadMergedRegisteredUsers(true);
+    const matchingUsers = savedUsers.filter(
+      (u) =>
+        u.id !== DEMO_USER.id &&
+        String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
+    );
 
-    // If not found locally (or missing credential fields), check Firestore directly
-    if (!found || (!found.passwordHash && !found.password)) {
-      savedUsers = await loadMergedRegisteredUsers(true);
-      found = findRealUserByCedula(savedUsers, digitsOnly);
-    }
-
-    if (!found) {
+    if (matchingUsers.length === 0) {
       if (digitsOnly === '48123945') {
         const msg = 'Para la cuenta de prueba usá el botón "Acceso rápido con Cédula Demo".';
         showToast(msg);
@@ -1091,20 +1286,36 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return { ok: false, error: msg };
     }
 
-    if (!found.passwordHash && !found.password) {
-      const msg = 'Esta cuenta no tiene contraseña configurada. Tocá "Crear Cuenta" con tu Cédula para asignarle una.';
+    const withCredentials = matchingUsers.filter((u) => Boolean(u.passwordHash || u.password));
+
+    if (withCredentials.length === 0) {
+      const legacyUser = matchingUsers[0];
+      const phoneDigits = String(legacyUser.phone || '').replace(/[^0-9]/g, '');
+      const hasRealPhone = phoneDigits.length >= 4 && !String(legacyUser.phone || '').includes('5555-0000');
+      const msg = hasRealPhone
+        ? 'Tu cuenta fue creada antes de pedir contraseña. Confirmá los últimos 4 dígitos de tu celular para activar esta contraseña.'
+        : 'Esta cuenta no tiene contraseña configurada. Tocá "Crear Cuenta" con tu Cédula para asignarle una.';
+      showToast(msg);
+      return {
+        ok: false,
+        needsPasswordSetup: hasRealPhone,
+        hasRegisteredPhone: hasRealPhone,
+        error: msg,
+      };
+    }
+
+    const matchedUser = withCredentials.find((u) =>
+      verifyPassword(enteredPassword, u.passwordHash, u.password)
+    );
+
+    if (!matchedUser) {
+      const msg =
+        'Contraseña incorrecta. Revisá mayúsculas o espacios, o pedile al dueño que la restablezca desde Panel Dueño → Club 8 Porciones → Clave.';
       showToast(msg);
       return { ok: false, error: msg };
     }
 
-    const isPasswordValid = verifyPassword(enteredPassword, found.passwordHash, found.password);
-    if (!isPasswordValid) {
-      const msg = 'Contraseña incorrecta. Verificá tu contraseña e intentá nuevamente.';
-      showToast(msg);
-      return { ok: false, error: msg };
-    }
-
-    let authenticatedUser = normalizeUser(found);
+    let authenticatedUser = normalizeUser(matchedUser);
 
     // Upgrade legacy plaintext password to salted SHA-256 hash on successful login
     if (!authenticatedUser.passwordHash && authenticatedUser.password) {
@@ -1134,6 +1345,56 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         : `CI ${authenticatedUser.cedula}`;
     showToast(`¡Bienvenido de nuevo, ${displayName}!`);
     return { ok: true, user: authenticatedUser };
+  };
+
+  const activateLegacyUserPassword = async (
+    cedula: string,
+    phoneLast4: string,
+    newPassword: string
+  ): Promise<LoginResult> => {
+    const digitsOnly = cedula.trim().replace(/[^0-9]/g, '');
+    const cleanLast4 = phoneLast4.replace(/[^0-9]/g, '').slice(-4);
+    if (!digitsOnly || cleanLast4.length < 4) {
+      return { ok: false, error: 'Ingresá los últimos 4 dígitos de tu teléfono registrado.' };
+    }
+    if (!newPassword || newPassword.length < 4) {
+      return { ok: false, error: 'La contraseña debe tener al menos 4 caracteres.' };
+    }
+
+    const savedUsers = await loadMergedRegisteredUsers(true);
+    const found = findRealUserByCedula(savedUsers, digitsOnly);
+    if (!found) {
+      return { ok: false, error: 'No encontramos esa Cédula.' };
+    }
+    if (found.passwordHash || found.password) {
+      return { ok: false, error: 'Esta cuenta ya tiene una contraseña activa.' };
+    }
+
+    const storedPhoneDigits = String(found.phone || '').replace(/[^0-9]/g, '');
+    if (storedPhoneDigits.length < 4 || !storedPhoneDigits.endsWith(cleanLast4)) {
+      return { ok: false, error: 'Los dígitos del teléfono no coinciden con los registrados en la cuenta.' };
+    }
+
+    const updated: User = {
+      ...normalizeUser(found),
+      passwordHash: hashPassword(newPassword),
+    };
+    delete updated.password;
+
+    setUser(updated);
+    setAllRegisteredUsers((prev) => {
+      const next = [...prev.filter((u) => u.id !== updated.id), updated];
+      try {
+        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setDoc(doc(db, 'users', updated.id), sanitizeForFirestore(updated)).catch((err) => {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${updated.id}`, true);
+    });
+
+    showToast(`✓ Contraseña activada. ¡Bienvenido, ${updated.name}!`);
+    return { ok: true, user: updated };
   };
 
   const register = async (data: Omit<User, 'id' | 'registeredAt'>): Promise<{ user: User | null; error?: string }> => {
@@ -1224,6 +1485,114 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       handleFirestoreError(err, OperationType.UPDATE, `users/${updated.id}`, false);
     });
     showToast('Tus datos han sido actualizados.');
+  };
+
+  const changeUserPassword = (currentPassword: string, newPassword: string): { ok: boolean; error?: string } => {
+    if (!user) {
+      return { ok: false, error: 'Iniciá sesión para cambiar tu contraseña.' };
+    }
+    if (user.id === DEMO_USER.id) {
+      return { ok: false, error: 'La cuenta Demo no utiliza contraseña personalizada.' };
+    }
+    if (!newPassword || newPassword.length < 4) {
+      return { ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' };
+    }
+
+    if (user.passwordHash || user.password) {
+      if (!currentPassword) {
+        return { ok: false, error: 'Ingresá tu contraseña actual.' };
+      }
+      if (!verifyPassword(currentPassword, user.passwordHash, user.password)) {
+        return { ok: false, error: 'La contraseña actual no es correcta.' };
+      }
+    }
+
+    const updated: User = {
+      ...user,
+      passwordHash: hashPassword(newPassword),
+    };
+    delete updated.password;
+
+    setUser(updated);
+    setAllRegisteredUsers((prev) => {
+      const next = [...prev.filter((u) => u.id !== updated.id), updated];
+      try {
+        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setDoc(doc(db, 'users', updated.id), sanitizeForFirestore(updated)).catch((err) => {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${updated.id}`, true);
+    });
+    showToast('✓ Tu contraseña se actualizó correctamente.');
+    return { ok: true };
+  };
+
+  const adminResetUserPassword = (userId: string, newPassword: string): { ok: boolean; error?: string } => {
+    if (!isAdminAuthenticated) {
+      return { ok: false, error: 'Acceso de superusuario requerido.' };
+    }
+    if (!newPassword || !newPassword.trim() || newPassword.length < 4) {
+      return { ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' };
+    }
+    const target = allRegisteredUsers.find((u) => u.id === userId);
+    if (!target) {
+      return { ok: false, error: 'Cliente no encontrado.' };
+    }
+    if (target.id === DEMO_USER.id) {
+      return { ok: false, error: 'La cuenta Demo no requiere contraseña.' };
+    }
+
+    const updated: User = {
+      ...target,
+      passwordHash: hashPassword(newPassword),
+    };
+    delete updated.password;
+
+    setAllRegisteredUsers((prev) => {
+      const next = prev.map((u) => (u.id === updated.id ? updated : u));
+      try {
+        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    if (user && user.id === updated.id) {
+      setUser(updated);
+    }
+    setDoc(doc(db, 'users', updated.id), sanitizeForFirestore(updated)).catch((err) => {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${updated.id}`, true);
+    });
+    showToast(`✓ Contraseña restablecida para ${target.name || target.cedula}.`);
+    return { ok: true };
+  };
+
+  const deleteUser = (userId: string): { ok: boolean; error?: string } => {
+    if (!isAdminAuthenticated) {
+      return { ok: false, error: 'Acceso de superusuario requerido.' };
+    }
+    if (userId === DEMO_USER.id) {
+      return { ok: false, error: 'La cuenta Demo de prueba no se puede eliminar.' };
+    }
+    const target = allRegisteredUsers.find((u) => u.id === userId);
+    if (!target) {
+      return { ok: false, error: 'Usuario no encontrado.' };
+    }
+
+    setAllRegisteredUsers((prev) => {
+      const next = prev.filter((u) => u.id !== userId);
+      try {
+        localStorage.setItem('pizzeria_oz_registered_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    if (user && user.id === userId) {
+      setUser(null);
+    }
+    deleteDoc(doc(db, 'users', userId)).catch((err) => {
+      handleFirestoreError(err, OperationType.DELETE, `users/${userId}`, true);
+    });
+    showToast(`✓ Usuario "${target.name || target.cedula}" eliminado.`);
+    return { ok: true };
   };
 
   const loginAsDemo = () => {
@@ -1491,6 +1860,60 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
     return newOrder;
   };
 
+  const reorderFromOrder = (order: Order) => {
+    if (!user) {
+      openAuthModal('login');
+      return;
+    }
+
+    const itemsToAdd: CartItem[] = [];
+    const skippedNames: string[] = [];
+
+    for (const item of order.items || []) {
+      const catalogProduct =
+        products.find((p) => p.id === item.productId) ||
+        products.find((p) => item.productName.toLowerCase().startsWith(p.name.toLowerCase()));
+
+      if (!catalogProduct || catalogProduct.available === false) {
+        skippedNames.push(item.productName);
+        continue;
+      }
+
+      const flavors = item.selectedFlavors && item.selectedFlavors.length > 0 ? item.selectedFlavors : undefined;
+      const isArmaTu = Boolean(catalogProduct.id.includes('arma-tu'));
+      const extraFlavorsCost = flavors ? calculateExtraFlavorsCost(flavors.length, isArmaTu) : 0;
+      const unitPrice =
+        item.selectedBurgerTier && catalogProduct.burgerTiers
+          ? catalogProduct.burgerTiers[item.selectedBurgerTier]
+          : catalogProduct.price;
+
+      itemsToAdd.push({
+        product: catalogProduct,
+        quantity: Math.max(1, Number(item.quantity) || 1),
+        selectedFlavors: flavors,
+        extraFlavorsCost,
+        observations: item.observations,
+        selectedBurgerTier: item.selectedBurgerTier,
+        unitPrice,
+      });
+    }
+
+    if (itemsToAdd.length === 0) {
+      showToast('⚠️ Los productos de ese pedido no están disponibles en este momento.');
+      return;
+    }
+
+    setCart((prev) => [...prev, ...itemsToAdd]);
+    setIsUserDashboardOpen(false);
+    setIsCartOpen(true);
+
+    if (skippedNames.length > 0) {
+      showToast(`✓ Pedido cargado al carrito (agotados omitidos: ${skippedNames.join(', ')}).`);
+    } else {
+      showToast(`✓ ¡Listo! Cargamos ${itemsToAdd.length} producto(s) de tu pedido #${order.id} al carrito.`);
+    }
+  };
+
   const updateOrderStatus = (orderId: string, status: OrderStatus) => {
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status } : o))
@@ -1505,8 +1928,38 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
   };
 
   const updateStoreSettings = (newSettings: Partial<StoreSettings>) => {
-    setStoreSettings((prev) => ({ ...prev, ...newSettings }));
-    setDoc(doc(db, 'settings', 'global'), sanitizeForFirestore(newSettings), { merge: true })
+    const prev = storeSettingsRef.current;
+    const mergedNext = { ...prev, ...newSettings };
+    const scheduleChanged =
+      newSettings.autoOpenTime !== undefined ||
+      newSettings.autoCloseTime !== undefined ||
+      newSettings.autoOpenDays !== undefined;
+
+    const finalPayload: Partial<StoreSettings> = { ...newSettings };
+    if (scheduleChanged) {
+      const oldAutoText = formatScheduleHoursText(prev.autoOpenTime, prev.autoCloseTime, prev.autoOpenDays);
+      const currentText = (newSettings.storeHours ?? prev.storeHours ?? '').trim();
+      if (
+        newSettings.storeHours === undefined ||
+        currentText === DEFAULT_SETTINGS.storeHours ||
+        currentText === oldAutoText
+      ) {
+        finalPayload.storeHours = formatScheduleHoursText(
+          mergedNext.autoOpenTime,
+          mergedNext.autoCloseTime,
+          mergedNext.autoOpenDays
+        );
+      }
+    } else if (newSettings.storeHours !== undefined) {
+      const parsedFromHours = extractTimeRangeFromText(newSettings.storeHours);
+      if (parsedFromHours) {
+        finalPayload.autoOpenTime = parsedFromHours.openTime;
+        finalPayload.autoCloseTime = parsedFromHours.closeTime;
+      }
+    }
+
+    setStoreSettings((curr) => normalizeSettings(finalPayload, curr));
+    setDoc(doc(db, 'settings', 'global'), sanitizeForFirestore(finalPayload), { merge: true })
       .then(() => {
         showToast('✓ Configuración guardada y sincronizada en la nube.');
       })
@@ -1719,16 +2172,23 @@ Quedo a la espera de su confirmación para comenzar la preparación. ¡Muchas gr
         cartSubtotal,
         user,
         login,
+        activateLegacyUserPassword,
         register,
         logout,
         updateProfile,
+        changeUserPassword,
+        adminResetUserPassword,
+        deleteUser,
         loginAsDemo,
         orders,
         userOrders,
         createOrder,
+        reorderFromOrder,
         updateOrderStatus,
         storeSettings,
         updateStoreSettings,
+        isStoreCurrentlyOpen,
+        storeStatusReason,
         formatWhatsAppMessage,
         getWhatsAppUrl,
         contactMessages,
