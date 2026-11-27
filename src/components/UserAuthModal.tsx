@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, UserPlus, LogIn, Sparkles, MapPin, Phone, Lock, User as UserIcon, CreditCard, ShieldCheck, Smartphone } from 'lucide-react';
+import { X, UserPlus, LogIn, Sparkles, MapPin, Phone, Lock, User as UserIcon, CreditCard, ShieldCheck, Smartphone, AlertCircle } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 
 export const UserAuthModal: React.FC = () => {
@@ -16,15 +16,19 @@ export const UserAuthModal: React.FC = () => {
     storeSettings,
     setShowWelcomeScreen,
     showToast,
-    allRegisteredUsers,
   } = useStore();
 
   const mode = authModalMode;
-  const setMode = setAuthModalMode;
+  const setMode = (nextMode: 'login' | 'register') => {
+    setAuthError(null);
+    setAuthModalMode(nextMode);
+  };
 
   // Login fields using Cédula
   const [loginCedula, setLoginCedula] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Register fields using Cédula
   const [regName, setRegName] = useState('');
@@ -36,17 +40,28 @@ export const UserAuthModal: React.FC = () => {
 
   if (!isAuthModalOpen) return null;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginCedula.trim()) return;
-    const digitsOnly = loginCedula.replace(/[^0-9]/g, '');
-    const existing = allRegisteredUsers.find(
-      (u) => Boolean(digitsOnly) && String(u?.cedula || '').replace(/[^0-9]/g, '') === digitsOnly
-    );
-    const ok = login(loginCedula, loginPassword);
-    if (ok) {
+    setAuthError(null);
+    if (!loginCedula.trim()) {
+      setAuthError('Ingresá tu número de Cédula.');
+      return;
+    }
+    if (!loginPassword) {
+      setAuthError('Ingresá tu contraseña.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const result = await login(loginCedula, loginPassword);
+      if (!result.ok || !result.user) {
+        setAuthError(result.error || 'Cédula o contraseña incorrecta.');
+        return;
+      }
+
+      const existing = result.user;
       const needsProfile =
-        !existing ||
         !existing.name?.trim() ||
         existing.name.startsWith('Cliente CI ') ||
         existing.name === 'Cliente OZ' ||
@@ -56,6 +71,7 @@ export const UserAuthModal: React.FC = () => {
         existing.address === 'Dirección por definir' ||
         existing.address === 'Retiro en local';
 
+      setLoginPassword('');
       setShowWelcomeScreen(false);
       setIsAuthModalOpen(false);
       setDashboardInitialTab(needsProfile ? 'perfil' : 'pedidos');
@@ -63,11 +79,14 @@ export const UserAuthModal: React.FC = () => {
       if (needsProfile) {
         showToast('Completá tu nombre, teléfono y dirección para finalizar tu registro.');
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthError(null);
     if (
       !regName.trim() ||
       !regCedula.trim() ||
@@ -76,26 +95,45 @@ export const UserAuthModal: React.FC = () => {
       !regCity.trim() ||
       !regPassword.trim()
     ) {
-      showToast('Por favor completá todos los campos obligatorios (*), incluyendo tu dirección.');
+      const msg = 'Por favor completá todos los campos obligatorios (*), incluyendo tu dirección y contraseña.';
+      setAuthError(msg);
+      showToast(msg);
+      return;
+    }
+    if (regPassword.length < 4) {
+      const msg = 'La contraseña debe tener al menos 4 caracteres.';
+      setAuthError(msg);
       return;
     }
 
-    register({
-      name: regName.trim(),
-      cedula: regCedula.trim(),
-      phone: regPhone.trim(),
-      password: regPassword,
-      address: regAddress.trim(),
-      city: regCity.trim() || 'Melo',
-    });
+    setIsSubmitting(true);
+    try {
+      const result = await register({
+        name: regName.trim(),
+        cedula: regCedula.trim(),
+        phone: regPhone.trim(),
+        password: regPassword,
+        address: regAddress.trim(),
+        city: regCity.trim() || 'Melo',
+      });
 
-    setShowWelcomeScreen(false);
-    setIsAuthModalOpen(false);
-    setDashboardInitialTab('pedidos');
-    setIsUserDashboardOpen(true);
+      if (!result.user) {
+        setAuthError(result.error || 'No se pudo crear la cuenta.');
+        return;
+      }
+
+      setRegPassword('');
+      setShowWelcomeScreen(false);
+      setIsAuthModalOpen(false);
+      setDashboardInitialTab('pedidos');
+      setIsUserDashboardOpen(true);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDemoAccess = () => {
+    setAuthError(null);
     loginAsDemo();
     setShowWelcomeScreen(false);
     setIsAuthModalOpen(false);
@@ -218,18 +256,29 @@ export const UserAuthModal: React.FC = () => {
                   type="password"
                   required
                   value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
+                  onChange={(e) => {
+                    setLoginPassword(e.target.value);
+                    if (authError) setAuthError(null);
+                  }}
                   placeholder="••••••••"
                   className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all"
                 />
               </div>
 
+              {authError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{authError}</span>
+                </div>
+              )}
+
               <button
                 type="submit"
-                className="w-full mt-3 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 rounded-xl text-sm font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                disabled={isSubmitting}
+                className="w-full mt-3 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-60 text-stone-950 rounded-xl text-sm font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
               >
                 <LogIn className="w-4 h-4" />
-                <span>Ingresar a mi Cuenta</span>
+                <span>{isSubmitting ? 'Verificando...' : 'Ingresar a mi Cuenta'}</span>
               </button>
             </form>
 
@@ -344,12 +393,23 @@ export const UserAuthModal: React.FC = () => {
                 <input
                   type="password"
                   required
+                  minLength={4}
                   value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  placeholder="Creá tu contraseña para volver a entrar"
+                  onChange={(e) => {
+                    setRegPassword(e.target.value);
+                    if (authError) setAuthError(null);
+                  }}
+                  placeholder="Creá tu contraseña (mín. 4 caracteres)"
                   className="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
                 />
               </div>
+
+              {authError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{authError}</span>
+                </div>
+              )}
 
               {/* App shortcut badge */}
               <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-900 flex items-center gap-2.5">
@@ -361,10 +421,11 @@ export const UserAuthModal: React.FC = () => {
 
               <button
                 type="submit"
-                className="w-full mt-1 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white rounded-xl text-sm font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                disabled={isSubmitting}
+                className="w-full mt-1 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 disabled:opacity-60 text-white rounded-xl text-sm font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
               >
                 <UserPlus className="w-4 h-4" />
-                <span>Registrarme y Comenzar a Pedir</span>
+                <span>{isSubmitting ? 'Registrando...' : 'Registrarme y Comenzar a Pedir'}</span>
               </button>
             </form>
 
