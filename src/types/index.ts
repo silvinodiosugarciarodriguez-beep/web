@@ -74,7 +74,8 @@ export interface User {
   id: string;
   name: string;
   cedula: string; // Número de Cédula de Identidad (CI)
-  password?: string;
+  password?: string; // Legacy plaintext fallback only for migrating existing accounts
+  passwordHash?: string;
   email?: string;
   phone: string;
   address: string;
