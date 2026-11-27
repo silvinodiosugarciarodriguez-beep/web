@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, UserPlus, LogIn, Sparkles, MapPin, Phone, Lock, User as UserIcon, CreditCard, ShieldCheck, Smartphone, AlertCircle } from 'lucide-react';
+import { X, UserPlus, LogIn, Sparkles, MapPin, Phone, Lock, User as UserIcon, CreditCard, ShieldCheck, Smartphone, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 
 export const UserAuthModal: React.FC = () => {
@@ -7,6 +7,7 @@ export const UserAuthModal: React.FC = () => {
     isAuthModalOpen,
     setIsAuthModalOpen,
     login,
+    activateLegacyUserPassword,
     register,
     loginAsDemo,
     setIsUserDashboardOpen,
@@ -21,12 +22,17 @@ export const UserAuthModal: React.FC = () => {
   const mode = authModalMode;
   const setMode = (nextMode: 'login' | 'register') => {
     setAuthError(null);
+    setNeedsLegacySetup(false);
+    setLegacyPhoneLast4('');
     setAuthModalMode(nextMode);
   };
 
   // Login fields using Cédula
   const [loginCedula, setLoginCedula] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPass, setShowLoginPass] = useState(false);
+  const [needsLegacySetup, setNeedsLegacySetup] = useState(false);
+  const [legacyPhoneLast4, setLegacyPhoneLast4] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -35,10 +41,34 @@ export const UserAuthModal: React.FC = () => {
   const [regCedula, setRegCedula] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [showRegPass, setShowRegPass] = useState(false);
   const [regAddress, setRegAddress] = useState('');
   const [regCity, setRegCity] = useState('Melo');
 
   if (!isAuthModalOpen) return null;
+
+  const completeUserLogin = (existing: any) => {
+    const needsProfile =
+      !existing.name?.trim() ||
+      existing.name.startsWith('Cliente CI ') ||
+      existing.name === 'Cliente OZ' ||
+      !existing.phone?.trim() ||
+      existing.phone.includes('5555-0000') ||
+      !existing.address?.trim() ||
+      existing.address === 'Dirección por definir' ||
+      existing.address === 'Retiro en local';
+
+    setLoginPassword('');
+    setNeedsLegacySetup(false);
+    setLegacyPhoneLast4('');
+    setShowWelcomeScreen(false);
+    setIsAuthModalOpen(false);
+    setDashboardInitialTab(needsProfile ? 'perfil' : 'pedidos');
+    setIsUserDashboardOpen(true);
+    if (needsProfile) {
+      showToast('Completá tu nombre, teléfono y dirección para finalizar tu registro.');
+    }
+  };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,31 +84,30 @@ export const UserAuthModal: React.FC = () => {
 
     setIsSubmitting(true);
     try {
+      if (needsLegacySetup) {
+        if (loginPassword.length < 4) {
+          setAuthError('La contraseña debe tener al menos 4 caracteres.');
+          return;
+        }
+        const res = await activateLegacyUserPassword(loginCedula, legacyPhoneLast4, loginPassword);
+        if (!res.ok || !res.user) {
+          setAuthError(res.error || 'No se pudo activar la contraseña.');
+          return;
+        }
+        completeUserLogin(res.user);
+        return;
+      }
+
       const result = await login(loginCedula, loginPassword);
       if (!result.ok || !result.user) {
+        if (result.needsPasswordSetup) {
+          setNeedsLegacySetup(true);
+        }
         setAuthError(result.error || 'Cédula o contraseña incorrecta.');
         return;
       }
 
-      const existing = result.user;
-      const needsProfile =
-        !existing.name?.trim() ||
-        existing.name.startsWith('Cliente CI ') ||
-        existing.name === 'Cliente OZ' ||
-        !existing.phone?.trim() ||
-        existing.phone.includes('5555-0000') ||
-        !existing.address?.trim() ||
-        existing.address === 'Dirección por definir' ||
-        existing.address === 'Retiro en local';
-
-      setLoginPassword('');
-      setShowWelcomeScreen(false);
-      setIsAuthModalOpen(false);
-      setDashboardInitialTab(needsProfile ? 'perfil' : 'pedidos');
-      setIsUserDashboardOpen(true);
-      if (needsProfile) {
-        showToast('Completá tu nombre, teléfono y dirección para finalizar tu registro.');
-      }
+      completeUserLogin(result.user);
     } finally {
       setIsSubmitting(false);
     }
@@ -252,18 +281,49 @@ export const UserAuthModal: React.FC = () => {
                   <Lock className="w-3.5 h-3.5 text-amber-600" />
                   <span>Contraseña *</span>
                 </label>
-                <input
-                  type="password"
-                  required
-                  value={loginPassword}
-                  onChange={(e) => {
-                    setLoginPassword(e.target.value);
-                    if (authError) setAuthError(null);
-                  }}
-                  placeholder="••••••••"
-                  className="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all"
-                />
+                <div className="relative">
+                  <input
+                    type={showLoginPass ? 'text' : 'password'}
+                    required
+                    value={loginPassword}
+                    onChange={(e) => {
+                      setLoginPassword(e.target.value);
+                      if (authError) setAuthError(null);
+                    }}
+                    placeholder="Ingresá tu contraseña"
+                    className="w-full pl-3.5 pr-10 py-2.5 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPass((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-500 hover:text-stone-800 cursor-pointer"
+                    aria-label={showLoginPass ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {showLoginPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
+
+              {needsLegacySetup && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
+                  <div className="text-xs font-bold text-amber-950">
+                    Activá la contraseña de tu cuenta existente
+                  </div>
+                  <p className="text-[11px] text-amber-900">
+                    Ingresá los <strong>últimos 4 dígitos de tu celular</strong> registrado para guardar la contraseña que escribiste arriba y entrar:
+                  </p>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={4}
+                    required
+                    value={legacyPhoneLast4}
+                    onChange={(e) => setLegacyPhoneLast4(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="Ej: 3456"
+                    className="w-full px-3 py-2 text-sm bg-white border border-amber-400 rounded-lg font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              )}
 
               {authError && (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
@@ -278,7 +338,13 @@ export const UserAuthModal: React.FC = () => {
                 className="w-full mt-3 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-60 text-stone-950 rounded-xl text-sm font-bold transition-all shadow-md active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
               >
                 <LogIn className="w-4 h-4" />
-                <span>{isSubmitting ? 'Verificando...' : 'Ingresar a mi Cuenta'}</span>
+                <span>
+                  {isSubmitting
+                    ? 'Verificando...'
+                    : needsLegacySetup
+                    ? 'Activar Contraseña y Entrar'
+                    : 'Ingresar a mi Cuenta'}
+                </span>
               </button>
             </form>
 
@@ -388,20 +454,30 @@ export const UserAuthModal: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-stone-700 mb-1 flex items-center gap-1.5">
                   <Lock className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Crear Contraseña *</span>
+                  <span>Crear Contraseña * (4 o más caracteres, puede ser larga)</span>
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={4}
-                  value={regPassword}
-                  onChange={(e) => {
-                    setRegPassword(e.target.value);
-                    if (authError) setAuthError(null);
-                  }}
-                  placeholder="Creá tu contraseña (mín. 4 caracteres)"
-                  className="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
-                />
+                <div className="relative">
+                  <input
+                    type={showRegPass ? 'text' : 'password'}
+                    required
+                    minLength={4}
+                    value={regPassword}
+                    onChange={(e) => {
+                      setRegPassword(e.target.value);
+                      if (authError) setAuthError(null);
+                    }}
+                    placeholder="Elegí una clave (mínimo 4 caracteres, sin límite máximo)"
+                    className="w-full pl-3.5 pr-10 py-2 text-sm bg-stone-50 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegPass((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-500 hover:text-stone-800 cursor-pointer"
+                    aria-label={showRegPass ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {showRegPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               {authError && (
