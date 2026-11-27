@@ -25,6 +25,8 @@ import { useStore } from '../context/StoreContext';
 export const WelcomeScreen: React.FC = () => {
   const {
     storeSettings,
+    isStoreCurrentlyOpen,
+    storeStatusReason,
     user,
     setShowWelcomeScreen,
     openAuthModal,
@@ -213,11 +215,40 @@ export const WelcomeScreen: React.FC = () => {
           </button>
         </div>
 
-        {/* 8 Slices Badge */}
-        <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-amber-500/15 border border-amber-500/40 rounded-full text-amber-300 text-xs font-medium mb-3 backdrop-blur-xs">
-          <Pizza className="w-3.5 h-3.5 text-amber-400" />
-          <span>8 Clásicas Porciones · Receta de Masa 2020</span>
+        {/* 8 Slices Badge + Live Store Status */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mb-3">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 bg-amber-500/15 border border-amber-500/40 rounded-full text-amber-300 text-xs font-medium backdrop-blur-xs">
+            <Pizza className="w-3.5 h-3.5 text-amber-400" />
+            <span>8 Clásicas Porciones · Receta de Masa 2020</span>
+          </div>
+          <div
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border backdrop-blur-xs ${
+              isStoreCurrentlyOpen
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                : 'bg-rose-500/20 border-rose-500/50 text-rose-200'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${isStoreCurrentlyOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+            <span>
+              {isStoreCurrentlyOpen
+                ? `Abierto ahora (${storeSettings.autoOpenTime}–${storeSettings.autoCloseTime})`
+                : storeStatusReason === 'schedule_closed'
+                ? `Cerrado · Abrimos ${storeSettings.autoOpenTime} hs`
+                : 'Cerrado ahora'}
+            </span>
+          </div>
         </div>
+
+        {!isStoreCurrentlyOpen && (
+          <div className="mb-4 max-w-md w-full px-4 py-2.5 rounded-2xl bg-rose-950/85 border border-rose-500/50 text-rose-100 text-xs leading-snug shadow-lg">
+            <strong className="block text-rose-300 uppercase tracking-wider text-[11px]">
+              {storeStatusReason === 'schedule_closed'
+                ? `🔴 Fuera de horario (${storeSettings.autoOpenTime} a ${storeSettings.autoCloseTime} hs)`
+                : '🔴 Local Cerrado Momentáneamente'}
+            </strong>
+            <span className="text-rose-100/90">{storeSettings.closedMessage}</span>
+          </div>
+        )}
 
         {/* Title & Tagline */}
         <h1 className="text-3xl sm:text-5xl md:text-6xl font-serif font-black tracking-tight text-white leading-tight">
